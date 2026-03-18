@@ -1,17 +1,3 @@
-# Python
-__pycache__/
-*.py[cod]
-*.pyo
-*.pyd
-.pytest_cache/
-.mypy_cache/
-.ruff_cache/
-
-# Virtualenv / local env
-.env
-.venv/
-venv/
-
 # Node / frontend
 frontend/node_modules/
 frontend/dist/
@@ -25,6 +11,9 @@ uploads/
 # Go
 boxchat-go
 go/boxchat-go
+go/*.out
+go/*.html
+go/coverage/
 
 # Config (secrets)
 config.json

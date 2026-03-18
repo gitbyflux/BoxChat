@@ -1,16 +1,19 @@
 package http
 
 import (
-	"net/http"
-	"strconv"
-	"strings"
-	"time"
 	"boxchat/internal/database"
 	"boxchat/internal/handlers/socketio"
 	"boxchat/internal/middleware"
 	"boxchat/internal/models"
 	"boxchat/internal/services"
+	"errors"
+	"net/http"
+	"strconv"
+	"strings"
+	"time"
+
 	"github.com/gin-gonic/gin"
+	"gorm.io/gorm"
 )
 
 type BanUserInput struct {
@@ -568,6 +571,16 @@ func (h *AdminHandler) AdminChangePassword(c *gin.Context) {
 	adminService := services.NewAdminService()
 	err = adminService.ChangeUserPassword(user.ID, uint(userID), input.NewPassword)
 	if err != nil {
+		// Handle specific errors
+		if err.Error() == "password should be at least 8 characters long" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+		// Check if user not found
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			c.JSON(http.StatusNotFound, gin.H{"error": "User not found"})
+			return
+		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
@@ -596,6 +609,12 @@ func (h *AdminHandler) ChangeOwnPassword(c *gin.Context) {
 
 	adminService := services.NewAdminService()
 	if err := adminService.ChangeOwnPassword(user.ID, input.CurrentPassword, input.NewPassword); err != nil {
+		// Return 403 for invalid current password
+		if err.Error() == "invalid current password" {
+			c.JSON(http.StatusForbidden, gin.H{"error": "Invalid current password"})
+			return
+		}
+		// Return 400 for other errors (e.g., password too short)
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}

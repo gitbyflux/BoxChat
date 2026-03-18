@@ -1,8 +1,11 @@
 package socketio
 
 import (
+	"boxchat/internal/models"
+	"boxchat/internal/services"
 	"encoding/json"
 	"testing"
+	"time"
 )
 
 // ============================================================================
@@ -266,13 +269,16 @@ func TestGenerateSID(t *testing.T) {
 	// Generate multiple SIDs and verify they're unique
 	sids := make(map[string]bool)
 	for i := 0; i < 100; i++ {
-		sid := generateSID()
-		
+		sid, err := generateSID()
+		if err != nil {
+			t.Fatalf("generateSID() error = %v", err)
+		}
+
 		// Verify length (20 characters from base64 of 16 bytes)
 		if len(sid) != 20 {
 			t.Errorf("generateSID() length = %d, want 20", len(sid))
 		}
-		
+
 		// Verify uniqueness
 		if sids[sid] {
 			t.Errorf("generateSID() generated duplicate SID: %s", sid)
@@ -393,4 +399,188 @@ func TestCommandResultEncoding(t *testing.T) {
 			}
 		})
 	}
+}
+
+// ============================================================================
+// Helper Function Tests
+// ============================================================================
+
+func TestProcessReadMessage_NilClient(t *testing.T) {
+	// Should return false for nil client
+	result := ProcessReadMessage(nil, []byte("test"))
+	if result != false {
+		t.Error("ProcessReadMessage() should return false for nil client")
+	}
+}
+
+func TestSafeEmit_NilConn(t *testing.T) {
+	// Should not panic with nil connection and should return silently
+	defer func() {
+		if r := recover(); r != nil {
+			t.Errorf("safeEmit() panicked: %v", r)
+		}
+	}()
+
+	safeEmit(nil, "test_event", map[string]interface{}{"key": "value"})
+}
+
+func TestEmitError_NilConn(t *testing.T) {
+	defer func() {
+		if r := recover(); r != nil {
+			t.Errorf("emitError() panicked: %v", r)
+		}
+	}()
+
+	emitError(nil, "test error message")
+}
+
+func TestEmitCommandResult_NilConn(t *testing.T) {
+	defer func() {
+		if r := recover(); r != nil {
+			t.Errorf("emitCommandResult() panicked: %v", r)
+		}
+	}()
+
+	emitCommandResult(nil, true, "test message")
+}
+
+func TestEmitMemberMuteUpdate_NilConn(t *testing.T) {
+	defer func() {
+		if r := recover(); r != nil {
+			t.Errorf("emitMemberMuteUpdate() panicked: %v", r)
+		}
+	}()
+
+	mutedUntil := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+	update := &services.MemberMuteUpdate{
+		RoomID:     1,
+		UserID:     1,
+		MutedUntil: &mutedUntil,
+	}
+	emitMemberMuteUpdate(nil, 1, update)
+}
+
+func TestEmitMemberRemoved_NilConn(t *testing.T) {
+	defer func() {
+		if r := recover(); r != nil {
+			t.Errorf("emitMemberRemoved() panicked: %v", r)
+		}
+	}()
+
+	removed := &services.MemberRemoved{
+		UserID: 1,
+		RoomID: 2,
+	}
+	emitMemberRemoved(nil, removed)
+}
+
+func TestEmitForceRedirect_NilConn(t *testing.T) {
+	defer func() {
+		if r := recover(); r != nil {
+			t.Errorf("emitForceRedirect() panicked: %v", r)
+		}
+	}()
+
+	redirect := &services.ForceRedirect{
+		Location: "/login",
+		Reason:   "banned",
+	}
+	emitForceRedirect(nil, redirect)
+}
+
+func TestEmitMessageDeleted_NilConn(t *testing.T) {
+	defer func() {
+		if r := recover(); r != nil {
+			t.Errorf("emitMessageDeleted() panicked: %v", r)
+		}
+	}()
+
+	emitMessageDeleted(nil, 1, 2)
+}
+
+func TestEmitMessageEdited_NilConn(t *testing.T) {
+	defer func() {
+		if r := recover(); r != nil {
+			t.Errorf("emitMessageEdited() panicked: %v", r)
+		}
+	}()
+
+	msg := &models.Message{
+		BaseModel: models.BaseModel{
+			ID: 1,
+		},
+		Content:   "test",
+		ChannelID: 2,
+	}
+	emitMessageEdited(nil, msg, "2024-01-01T00:00:00Z")
+}
+
+func TestEmitNewDMCreated_NilConn(t *testing.T) {
+	defer func() {
+		if r := recover(); r != nil {
+			t.Errorf("emitNewDMCreated() panicked: %v", r)
+		}
+	}()
+
+	emitNewDMCreated(nil, 1, 2, "user1", "avatar.png")
+}
+
+func TestEmitReadStatusUpdated_NilConn(t *testing.T) {
+	defer func() {
+		if r := recover(); r != nil {
+			t.Errorf("emitReadStatusUpdated() panicked: %v", r)
+		}
+	}()
+
+	emitReadStatusUpdated(nil, 1, "user1", "channel_1")
+}
+
+func TestEmitNewDMMessage_NilConn(t *testing.T) {
+	defer func() {
+		if r := recover(); r != nil {
+			t.Errorf("emitNewDMMessage() panicked: %v", r)
+		}
+	}()
+
+	emitNewDMMessage(nil, 1)
+}
+
+func TestEmitServerRemoved_NilConn(t *testing.T) {
+	defer func() {
+		if r := recover(); r != nil {
+			t.Errorf("emitServerRemoved() panicked: %v", r)
+		}
+	}()
+
+	emitServerRemoved(nil, 1)
+}
+
+func TestEmitBulkMessagesDeleted_NilConn(t *testing.T) {
+	defer func() {
+		if r := recover(); r != nil {
+			t.Errorf("emitBulkMessagesDeleted() panicked: %v", r)
+		}
+	}()
+
+	emitBulkMessagesDeleted(nil, 1, 2, 10)
+}
+
+func TestEmitRoomStateRefresh_NilConn(t *testing.T) {
+	defer func() {
+		if r := recover(); r != nil {
+			t.Errorf("emitRoomStateRefresh() panicked: %v", r)
+		}
+	}()
+
+	emitRoomStateRefresh(nil, 1)
+}
+
+func TestEmitFriendRequestUpdated_NilConn(t *testing.T) {
+	defer func() {
+		if r := recover(); r != nil {
+			t.Errorf("emitFriendRequestUpdated() panicked: %v", r)
+		}
+	}()
+
+	emitFriendRequestUpdated(nil, 1, "accepted", 2, "user2", 3)
 }

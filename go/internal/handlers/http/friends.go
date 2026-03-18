@@ -1,14 +1,15 @@
 package http
 
 import (
-	"errors"
-	"net/http"
-	"strconv"
-	"time"
 	"boxchat/internal/database"
 	"boxchat/internal/handlers/socketio"
 	"boxchat/internal/middleware"
 	"boxchat/internal/models"
+	"errors"
+	"net/http"
+	"strconv"
+	"time"
+
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 )
@@ -402,13 +403,19 @@ func (h *APIHandler) CreateDMRoom(c *gin.Context) {
 	
 	// Check if DM room already exists
 	var existingRoom models.Room
-	database.DB.Where("type = ? AND ((owner_id = ? AND id IN (SELECT room_id FROM members WHERE user_id = ?)) OR (owner_id = ? AND id IN (SELECT room_id FROM members WHERE user_id = ?)))",
-		"dm", user.ID, targetID, targetID, user.ID).
-		Joins("JOIN members ON members.room_id = rooms.id").
-		Where("members.user_id IN (?, ?)", user.ID, targetID).
-		Group("rooms.id").
-		Having("COUNT(DISTINCT members.user_id) = 2").
-		First(&existingRoom)
+	// First check rooms owned by current user
+	err = database.DB.Where("type = ? AND owner_id = ?", "dm", user.ID).
+		Joins("JOIN members m1 ON m1.room_id = rooms.id AND m1.user_id = ?", user.ID).
+		Joins("JOIN members m2 ON m2.room_id = rooms.id AND m2.user_id = ?", targetID).
+		First(&existingRoom).Error
+	
+	// If not found, check rooms owned by target user
+	if err != nil || existingRoom.ID == 0 {
+		database.DB.Where("type = ? AND owner_id = ?", "dm", targetID).
+			Joins("JOIN members m1 ON m1.room_id = rooms.id AND m1.user_id = ?", targetID).
+			Joins("JOIN members m2 ON m2.room_id = rooms.id AND m2.user_id = ?", user.ID).
+			First(&existingRoom)
+	}
 	
 	if existingRoom.ID != 0 {
 		c.JSON(http.StatusOK, gin.H{

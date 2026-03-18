@@ -6,13 +6,15 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+
+	"github.com/gin-gonic/gin"
+
 	"boxchat/internal/config"
 	"boxchat/internal/database"
 	httpHandler "boxchat/internal/handlers/http"
 	"boxchat/internal/handlers/socketio"
 	"boxchat/internal/middleware"
 	"boxchat/internal/utils"
-	"github.com/gin-gonic/gin"
 )
 
 func main() {
@@ -47,6 +49,8 @@ func main() {
 	// Middleware
 	r.Use(middleware.CORS())
 	r.Use(middleware.Logger())
+	r.Use(middleware.Recovery())
+	r.Use(middleware.SecurityHeaders())
 
 	// Static files - serve frontend dist
 	frontendDist := filepath.Join(cfg.RootDir, "frontend", "dist")

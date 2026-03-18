@@ -1,11 +1,12 @@
 package services
 
 import (
+	"boxchat/internal/database"
+	"boxchat/internal/models"
 	"errors"
 	"log"
 	"time"
-	"boxchat/internal/database"
-	"boxchat/internal/models"
+
 	"golang.org/x/crypto/bcrypt"
 	"gorm.io/gorm"
 )
@@ -55,20 +56,23 @@ type SessionInfo struct {
 
 func (s *AuthService) Login(req *LoginRequest) (*models.User, error) {
 	var user models.User
-	
+
 	// Find user by username (case-insensitive)
 	if err := database.DB.Where("LOWER(username) = LOWER(?)", req.Username).First(&user).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
+			// Return generic error to prevent username enumeration
 			return nil, ErrInvalidCredentials
 		}
-		return nil, err
+		// Log the actual error for debugging but return generic error
+		log.Printf("[AUTH] Database error during login: %v", err)
+		return nil, ErrInvalidCredentials
 	}
-	
+
 	// Check if user is banned
 	if user.IsBanned {
 		return nil, errors.New("access denied")
 	}
-	
+
 	// Check password (try bcrypt first, then fallback to plain for legacy)
 	if err := bcrypt.CompareHashAndPassword([]byte(user.Password), []byte(req.Password)); err != nil {
 		// Fallback: check if it's a legacy plain password (for migration)

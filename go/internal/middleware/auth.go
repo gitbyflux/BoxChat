@@ -1,13 +1,17 @@
 package middleware
 
 import (
+	"boxchat/internal/database"
+	"boxchat/internal/models"
+	"crypto/rand"
+	"encoding/hex"
 	"log"
 	"net/http"
 	"os"
 	"strconv"
 	"strings"
-	"boxchat/internal/database"
-	"boxchat/internal/models"
+	"time"
+
 	"github.com/gin-gonic/gin"
 )
 
@@ -15,6 +19,108 @@ const (
 	UserIDKey = "userID"
 	UserKey   = "user"
 )
+
+// SecurityHeaders returns a middleware that sets security-related HTTP headers
+func SecurityHeaders() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		// Prevent clickjacking attacks
+		c.Writer.Header().Set("X-Frame-Options", "DENY")
+		
+		// Prevent MIME type sniffing
+		c.Writer.Header().Set("X-Content-Type-Options", "nosniff")
+		
+		// Enable XSS filter in browsers
+		c.Writer.Header().Set("X-XSS-Protection", "1; mode=block")
+		
+		// Content Security Policy - restrict resource loading
+		c.Writer.Header().Set("Content-Security-Policy", 
+			"default-src 'self'; "+
+			"script-src 'self' 'unsafe-inline' 'unsafe-eval'; "+
+			"style-src 'self' 'unsafe-inline'; "+
+			"img-src 'self' data: https:; "+
+			"font-src 'self' data:; "+
+			"connect-src 'self' ws: wss:; "+
+			"frame-ancestors 'none'")
+		
+		// Referrer Policy - limit referrer information
+		c.Writer.Header().Set("Referrer-Policy", "strict-origin-when-cross-origin")
+		
+		// Permissions Policy - disable unnecessary features
+		c.Writer.Header().Set("Permissions-Policy",
+			"geolocation=(), microphone=(), camera=(), payment=(), usb=()")
+		
+		// Remove Server header (Gin adds it by default)
+		c.Writer.Header().Del("Server")
+		
+		// Cache control for sensitive pages
+		if strings.HasPrefix(c.Request.URL.Path, "/api/") {
+			c.Writer.Header().Set("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate")
+			c.Writer.Header().Set("Pragma", "no-cache")
+			c.Writer.Header().Set("Expires", "0")
+		}
+		
+		c.Next()
+	}
+}
+
+// CSRF middleware for token-based CSRF protection
+func CSRF() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		// Skip CSRF for safe methods
+		if c.Request.Method == "GET" || c.Request.Method == "HEAD" || c.Request.Method == "OPTIONS" {
+			c.Next()
+			return
+		}
+		
+		// Get token from header
+		token := c.GetHeader("X-CSRF-Token")
+		
+		// Get token from cookie
+		cookieToken, err := c.Cookie("csrf_token")
+		if err != nil {
+			// Generate new CSRF token
+			token = generateCSRFToken()
+			c.SetCookie("csrf_token", token, int(24*time.Hour), "/", "", false, true)
+			c.Next()
+			return
+		}
+		
+		// Validate token
+		if token != cookieToken {
+			c.AbortWithStatusJSON(http.StatusForbidden, gin.H{
+				"error": "Invalid CSRF token",
+			})
+			return
+		}
+		
+		c.Next()
+	}
+}
+
+// generateCSRFToken generates a random CSRF token
+func generateCSRFToken() string {
+	bytes := make([]byte, 32)
+	if _, err := rand.Read(bytes); err != nil {
+		log.Printf("[CSRF] Failed to generate token: %v", err)
+		return ""
+	}
+	return hex.EncodeToString(bytes)
+}
+
+// Recovery returns a middleware that recovers from panics
+func Recovery() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		defer func() {
+			if err := recover(); err != nil {
+				log.Printf("[RECOVERY] Panic recovered: %v", err)
+				c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{
+					"error": "Internal server error",
+				})
+			}
+		}()
+		c.Next()
+	}
+}
 
 // Auth returns a middleware that checks if user is authenticated
 func Auth() gin.HandlerFunc {

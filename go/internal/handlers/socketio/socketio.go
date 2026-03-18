@@ -17,9 +17,11 @@ import (
 	"boxchat/internal/database"
 	"boxchat/internal/models"
 	"boxchat/internal/services"
+	"boxchat/internal/utils"
 
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
+	"golang.org/x/time/rate"
 	"gorm.io/gorm"
 )
 
@@ -27,9 +29,10 @@ import (
 // Socket.IO Protocol Constants
 // ============================================================================
 
-// Engine.IO protocol version
+// Rate limiting configuration
 const (
-	EIO_VERSION = "4"
+	MessageRateLimit  = 10  // messages per second
+	MessageBurstLimit = 20  // maximum burst size
 )
 
 // Socket.IO packet types
@@ -105,6 +108,7 @@ type Client struct {
 	Rooms     map[string]bool // Rooms/channels the client is subscribed to
 	mu        sync.RWMutex
 	pingTimer *time.Timer
+	rateLimiter *rate.Limiter // Rate limiter for incoming messages
 }
 
 // Hub maintains the set of active clients and broadcasts messages
@@ -131,10 +135,12 @@ var hub = &Hub{
 }
 
 // generateSID generates a random Socket.IO session ID
-func generateSID() string {
+func generateSID() (string, error) {
 	b := make([]byte, 16)
-	rand.Read(b)
-	return base64.URLEncoding.EncodeToString(b)[:20]
+	if _, err := rand.Read(b); err != nil {
+		return "", fmt.Errorf("failed to generate secure session ID: %w", err)
+	}
+	return base64.URLEncoding.EncodeToString(b)[:20], nil
 }
 
 // ============================================================================
@@ -283,7 +289,12 @@ func WSHandler(c *gin.Context) {
 	}
 
 	// Generate session ID
-	sid := generateSID()
+	sid, err := generateSID()
+	if err != nil {
+		log.Printf("[SOCKET.IO] Failed to generate session ID: %v", err)
+		conn.Close()
+		return
+	}
 
 	// Create client
 	client := &Client{
@@ -292,6 +303,7 @@ func WSHandler(c *gin.Context) {
 		Conn:  conn,
 		Send:  make(chan []byte, 256),
 		Rooms: make(map[string]bool),
+		rateLimiter: rate.NewLimiter(rate.Limit(MessageRateLimit), MessageBurstLimit),
 	}
 
 	// Send Engine.IO open packet
@@ -341,30 +353,60 @@ func writePump(client *Client) {
 	}
 }
 
+// ============================================================================
+// ReadPump Helper Functions (exported for testing)
+// ============================================================================
+
+// SetupPongHandler sets up the pong handler for the client connection
+func SetupPongHandler(conn *websocket.Conn) {
+	conn.SetPongHandler(func(appData string) error {
+		conn.SetReadDeadline(time.Now().Add(60 * time.Second))
+		return nil
+	})
+}
+
+// ProcessReadMessage processes a single read message and returns whether to continue reading
+func ProcessReadMessage(client *Client, message []byte) bool {
+	if client == nil || client.Conn == nil {
+		return false
+	}
+	handleMessage(client, string(message))
+	return true
+}
+
+// CleanupClient performs cleanup when readPump exits
+func CleanupClient(client *Client) {
+	hub.unregister <- client
+
+	// Update user presence
+	client.User.PresenceStatus = "offline"
+	now := time.Now()
+	client.User.LastSeen = &now
+	if err := database.DB.Save(client.User).Error; err != nil {
+		log.Printf("[SOCKET.IO] Failed to update user presence: %v", err)
+	}
+	emitPresenceUpdate(client.User)
+
+	client.Conn.Close()
+}
+
 func readPump(client *Client) {
 	defer func() {
-		hub.unregister <- client
-
-		// Update user presence
-		client.User.PresenceStatus = "offline"
-		now := time.Now()
-		client.User.LastSeen = &now
-		if err := database.DB.Save(client.User).Error; err != nil {
-			log.Printf("[SOCKET.IO] Failed to update user presence: %v", err)
-		}
-		emitPresenceUpdate(client.User)
-
-		client.Conn.Close()
+		CleanupClient(client)
 	}()
 
 	// Set read deadline for ping/pong
 	client.Conn.SetReadDeadline(time.Now().Add(60 * time.Second))
-	client.Conn.SetPongHandler(func(appData string) error {
-		client.Conn.SetReadDeadline(time.Now().Add(60 * time.Second))
-		return nil
-	})
+	SetupPongHandler(client.Conn)
 
 	for {
+		// Check rate limit BEFORE reading message to prevent memory exhaustion attacks
+		if !client.rateLimiter.Allow() {
+			emitError(client.Conn, "Rate limit exceeded. Please slow down.")
+			time.Sleep(100 * time.Millisecond)
+			continue
+		}
+
 		_, message, err := client.Conn.ReadMessage()
 		if err != nil {
 			if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure) {
@@ -373,7 +415,7 @@ func readPump(client *Client) {
 			break
 		}
 
-		handleMessage(client, string(message))
+		ProcessReadMessage(client, message)
 	}
 }
 
@@ -387,6 +429,9 @@ func handleMessage(client *Client, message string) {
 	packetType, data, err := decodeEngineIO(message)
 	if err != nil {
 		log.Printf("[SOCKET.IO] Decode error: %v", err)
+		if client != nil && client.Conn != nil {
+			client.Conn.Close()
+		}
 		return
 	}
 
@@ -559,9 +604,21 @@ func handleSendMessage(client *Client, msg map[string]interface{}) {
 	mentionService := services.NewMentionService()
 	mentionData := mentionService.ParseMentions(content, channel.RoomID, client.User.ID)
 
+	// Sanitize content to prevent XSS
+	sanitizedContent := utils.SanitizeHTML(content)
+
+	// Validate file_url if provided (prevent SSRF)
+	if fileURL != "" && !strings.HasPrefix(fileURL, "/uploads/") {
+		// External URL - validate it's not pointing to internal resources
+		if !utils.IsValidExternalURL(fileURL) {
+			emitError(client.Conn, "Invalid or unsafe file URL")
+			return
+		}
+	}
+
 	// Create message
 	message := models.Message{
-		Content:     content,
+		Content:     sanitizedContent,
 		UserID:      client.User.ID,
 		ChannelID:   channelID,
 		MessageType: messageType,
@@ -688,150 +745,131 @@ func emitPresenceUpdate(user *models.User) {
 	hub.mu.RUnlock()
 }
 
+// safeEmit is a helper function to safely emit events to a websocket connection
+func safeEmit(conn *websocket.Conn, event string, eventData map[string]interface{}) {
+	if conn == nil {
+		return
+	}
+	response := encodeSocketIOWithNamespace(PACKET_EVENT, "", event, eventData)
+	conn.WriteMessage(websocket.TextMessage, []byte(encodeEngineIO(EIO_MESSAGE, response)))
+}
+
 func emitError(conn *websocket.Conn, message string) {
-	eventData := map[string]interface{}{
+	safeEmit(conn, "error", map[string]interface{}{
 		"event":   "error",
 		"message": message,
-	}
-	response := encodeSocketIOWithNamespace(PACKET_EVENT, "", "error", eventData)
-	conn.WriteMessage(websocket.TextMessage, []byte(encodeEngineIO(EIO_MESSAGE, response)))
+	})
 }
 
 func emitCommandResult(conn *websocket.Conn, ok bool, message string) {
-	eventData := map[string]interface{}{
+	safeEmit(conn, "command_result", map[string]interface{}{
 		"event":   "command_result",
 		"ok":      ok,
 		"message": message,
-	}
-	response := encodeSocketIOWithNamespace(PACKET_EVENT, "", "command_result", eventData)
-	conn.WriteMessage(websocket.TextMessage, []byte(encodeEngineIO(EIO_MESSAGE, response)))
+	})
 }
 
 func emitMemberMuteUpdate(conn *websocket.Conn, roomID uint, update *services.MemberMuteUpdate) {
-	eventData := map[string]interface{}{
+	safeEmit(conn, "member_mute_updated", map[string]interface{}{
 		"event":       "member_mute_updated",
 		"room_id":     roomID,
 		"user_id":     update.UserID,
 		"muted_until": update.MutedUntil,
-	}
-	response := encodeSocketIOWithNamespace(PACKET_EVENT, "", "member_mute_updated", eventData)
-	conn.WriteMessage(websocket.TextMessage, []byte(encodeEngineIO(EIO_MESSAGE, response)))
+	})
 }
 
 func emitMemberRemoved(conn *websocket.Conn, removed *services.MemberRemoved) {
-	eventData := map[string]interface{}{
+	safeEmit(conn, "member_removed", map[string]interface{}{
 		"event":   "member_removed",
 		"user_id": removed.UserID,
 		"room_id": removed.RoomID,
-	}
-	response := encodeSocketIOWithNamespace(PACKET_EVENT, "", "member_removed", eventData)
-	conn.WriteMessage(websocket.TextMessage, []byte(encodeEngineIO(EIO_MESSAGE, response)))
+	})
 }
 
 func emitForceRedirect(conn *websocket.Conn, redirect *services.ForceRedirect) {
-	eventData := map[string]interface{}{
+	safeEmit(conn, "force_redirect", map[string]interface{}{
 		"event":    "force_redirect",
 		"location": redirect.Location,
 		"reason":   redirect.Reason,
-	}
-	response := encodeSocketIOWithNamespace(PACKET_EVENT, "", "force_redirect", eventData)
-	conn.WriteMessage(websocket.TextMessage, []byte(encodeEngineIO(EIO_MESSAGE, response)))
+	})
 }
 
 func emitMessageDeleted(conn *websocket.Conn, messageID, channelID uint) {
-	eventData := map[string]interface{}{
+	safeEmit(conn, "message_deleted", map[string]interface{}{
 		"event":      "message_deleted",
 		"message_id": messageID,
 		"channel_id": channelID,
-	}
-	response := encodeSocketIOWithNamespace(PACKET_EVENT, "", "message_deleted", eventData)
-	conn.WriteMessage(websocket.TextMessage, []byte(encodeEngineIO(EIO_MESSAGE, response)))
+	})
 }
 
 func emitMessageEdited(conn *websocket.Conn, message *models.Message, editedAtISO string) {
-	eventData := map[string]interface{}{
+	safeEmit(conn, "message_edited", map[string]interface{}{
 		"event":      "message_edited",
 		"message_id": message.ID,
 		"content":    message.Content,
 		"channel_id": message.ChannelID,
 		"edited_at":  editedAtISO,
-	}
-	response := encodeSocketIOWithNamespace(PACKET_EVENT, "", "message_edited", eventData)
-	conn.WriteMessage(websocket.TextMessage, []byte(encodeEngineIO(EIO_MESSAGE, response)))
+	})
 }
 
 func emitNewDMCreated(conn *websocket.Conn, roomID uint, fromUserID uint, fromUsername, fromAvatar string) {
-	eventData := map[string]interface{}{
+	safeEmit(conn, "new_dm_created", map[string]interface{}{
 		"event":         "new_dm_created",
 		"room_id":       roomID,
 		"from_user_id":  fromUserID,
 		"from_username": fromUsername,
 		"from_avatar":   fromAvatar,
-	}
-	response := encodeSocketIOWithNamespace(PACKET_EVENT, "", "new_dm_created", eventData)
-	conn.WriteMessage(websocket.TextMessage, []byte(encodeEngineIO(EIO_MESSAGE, response)))
+	})
 }
 
 func emitReadStatusUpdated(conn *websocket.Conn, userID uint, username, channelID string) {
-	eventData := map[string]interface{}{
+	safeEmit(conn, "read_status_updated", map[string]interface{}{
 		"event":      "read_status_updated",
 		"user_id":    userID,
 		"username":   username,
 		"channel_id": channelID,
-	}
-	response := encodeSocketIOWithNamespace(PACKET_EVENT, "", "read_status_updated", eventData)
-	conn.WriteMessage(websocket.TextMessage, []byte(encodeEngineIO(EIO_MESSAGE, response)))
+	})
 }
 
 func emitNewDMMessage(conn *websocket.Conn, roomID uint) {
-	eventData := map[string]interface{}{
+	safeEmit(conn, "new_dm_message", map[string]interface{}{
 		"event":   "new_dm_message",
 		"room_id": roomID,
-	}
-	response := encodeSocketIOWithNamespace(PACKET_EVENT, "", "new_dm_message", eventData)
-	conn.WriteMessage(websocket.TextMessage, []byte(encodeEngineIO(EIO_MESSAGE, response)))
+	})
 }
 
 func emitServerRemoved(conn *websocket.Conn, roomID uint) {
-	eventData := map[string]interface{}{
+	safeEmit(conn, "server_removed", map[string]interface{}{
 		"event":   "server_removed",
 		"room_id": roomID,
-	}
-	response := encodeSocketIOWithNamespace(PACKET_EVENT, "", "server_removed", eventData)
-	conn.WriteMessage(websocket.TextMessage, []byte(encodeEngineIO(EIO_MESSAGE, response)))
+	})
 }
 
 func emitBulkMessagesDeleted(conn *websocket.Conn, userID, roomID uint, deleted int) {
-	eventData := map[string]interface{}{
+	safeEmit(conn, "bulk_messages_deleted", map[string]interface{}{
 		"event":   "bulk_messages_deleted",
 		"user_id": userID,
 		"room_id": roomID,
 		"deleted": deleted,
-	}
-	response := encodeSocketIOWithNamespace(PACKET_EVENT, "", "bulk_messages_deleted", eventData)
-	conn.WriteMessage(websocket.TextMessage, []byte(encodeEngineIO(EIO_MESSAGE, response)))
+	})
 }
 
 func emitRoomStateRefresh(conn *websocket.Conn, roomID uint) {
-	eventData := map[string]interface{}{
+	safeEmit(conn, "room_state_refresh", map[string]interface{}{
 		"event":   "room_state_refresh",
 		"room_id": roomID,
-	}
-	response := encodeSocketIOWithNamespace(PACKET_EVENT, "", "room_state_refresh", eventData)
-	conn.WriteMessage(websocket.TextMessage, []byte(encodeEngineIO(EIO_MESSAGE, response)))
+	})
 }
 
 func emitFriendRequestUpdated(conn *websocket.Conn, requestID uint, status string, byUserID uint, byUsername string, dmRoomID uint) {
-	eventData := map[string]interface{}{
+	safeEmit(conn, "friend_request_updated", map[string]interface{}{
 		"event":         "friend_request_updated",
 		"request_id":    requestID,
 		"status":        status,
 		"by_user_id":    byUserID,
 		"by_username":   byUsername,
 		"dm_room_id":    dmRoomID,
-	}
-	response := encodeSocketIOWithNamespace(PACKET_EVENT, "", "friend_request_updated", eventData)
-	conn.WriteMessage(websocket.TextMessage, []byte(encodeEngineIO(EIO_MESSAGE, response)))
+	})
 }
 
 // ============================================================================
@@ -959,6 +997,11 @@ func EmitFriendRequestUpdated(userID, requestID uint, status string, byUserID ui
 // ============================================================================
 
 func handleModerationCommand(client *Client, roomID uint, content string) {
+	// Check for nil client (used in tests)
+	if client == nil || client.Conn == nil || client.User == nil {
+		return
+	}
+	
 	modService := services.NewModerationService()
 
 	parts := strings.Fields(content)

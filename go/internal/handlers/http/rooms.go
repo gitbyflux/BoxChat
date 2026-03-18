@@ -1,6 +1,9 @@
 package http
 
 import (
+	"boxchat/internal/database"
+	"boxchat/internal/models"
+	"boxchat/internal/utils"
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
@@ -10,9 +13,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
-	"boxchat/internal/database"
-	"boxchat/internal/models"
-	"boxchat/internal/utils"
+
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 )
@@ -242,13 +243,7 @@ func (h *APIHandler) DeleteRoom(c *gin.Context) {
 		return
 	}
 
-	// Check permission - only owner or superuser can delete
-	if !h.hasRoomDeletePermission(userIDUint, uint(roomID)) {
-		c.JSON(http.StatusForbidden, gin.H{"error": "Only room owner can delete the room"})
-		return
-	}
-
-	// Get room
+	// Get room first to check if it exists
 	var room models.Room
 	if err := database.DB.First(&room, roomID).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -256,6 +251,12 @@ func (h *APIHandler) DeleteRoom(c *gin.Context) {
 			return
 		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	// Check permission - only owner or superuser can delete
+	if !h.hasRoomDeletePermission(userIDUint, uint(roomID)) {
+		c.JSON(http.StatusForbidden, gin.H{"error": "Only room owner can delete the room"})
 		return
 	}
 

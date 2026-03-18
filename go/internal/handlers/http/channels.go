@@ -1,12 +1,13 @@
 package http
 
 import (
+	"boxchat/internal/database"
+	"boxchat/internal/models"
 	"encoding/json"
 	"errors"
 	"net/http"
 	"strconv"
-	"boxchat/internal/database"
-	"boxchat/internal/models"
+
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 )
@@ -271,10 +272,22 @@ func (h *APIHandler) UpdateChannelPermissions(c *gin.Context) {
 		}
 	}
 
-	// Build JSON array of valid role IDs
+	// Build JSON array of valid role IDs - validate each role
 	validRoleIDs := make([]uint, 0, len(validRoles))
+	validRoleIDSet := make(map[uint]bool)
 	for _, role := range validRoles {
-		validRoleIDs = append(validRoleIDs, role.ID)
+		if !validRoleIDSet[role.ID] {
+			validRoleIDs = append(validRoleIDs, role.ID)
+			validRoleIDSet[role.ID] = true
+		}
+	}
+
+	// Check if any requested role IDs were invalid
+	if len(validRoleIDs) != len(input.WriterRoleIDs) {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": "Some role IDs are invalid or do not belong to this room",
+		})
+		return
 	}
 
 	// Serialize to JSON

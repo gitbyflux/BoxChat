@@ -1,12 +1,12 @@
 package services
 
 import (
-	"errors"
-	"time"
 	"boxchat/internal/database"
 	"boxchat/internal/models"
+	"errors"
+	"time"
+
 	"golang.org/x/crypto/bcrypt"
-	"gorm.io/gorm"
 )
 
 var (
@@ -177,20 +177,31 @@ func (s *AdminService) MuteUserInRoom(adminID, roomID, targetID uint, durationMi
 	if !s.IsAdmin(adminID) {
 		return ErrNotAdmin
 	}
-	
+
 	until := time.Now().Add(time.Duration(durationMinutes) * time.Minute)
-	
+
 	var memberships []models.Member
 	if err := database.DB.Where("user_id = ? AND room_id = ?", targetID, roomID).Find(&memberships).Error; err != nil {
 		return err
 	}
-	
+
+	// Use transaction to ensure atomicity
+	tx := database.DB.Begin()
+	defer func() {
+		if r := recover(); r != nil {
+			tx.Rollback()
+		}
+	}()
+
 	for i := range memberships {
 		memberships[i].MutedUntil = &until
-		database.DB.Save(&memberships[i])
+		if err := tx.Save(&memberships[i]).Error; err != nil {
+			tx.Rollback()
+			return err
+		}
 	}
-	
-	return nil
+
+	return tx.Commit().Error
 }
 
 // UnmuteUserInRoom unmutes user in a room
@@ -198,18 +209,29 @@ func (s *AdminService) UnmuteUserInRoom(adminID, roomID, targetID uint) error {
 	if !s.IsAdmin(adminID) {
 		return ErrNotAdmin
 	}
-	
+
 	var memberships []models.Member
 	if err := database.DB.Where("user_id = ? AND room_id = ?", targetID, roomID).Find(&memberships).Error; err != nil {
 		return err
 	}
-	
+
+	// Use transaction to ensure atomicity
+	tx := database.DB.Begin()
+	defer func() {
+		if r := recover(); r != nil {
+			tx.Rollback()
+		}
+	}()
+
 	for i := range memberships {
 		memberships[i].MutedUntil = nil
-		database.DB.Save(&memberships[i])
+		if err := tx.Save(&memberships[i]).Error; err != nil {
+			tx.Rollback()
+			return err
+		}
 	}
-	
-	return nil
+
+	return tx.Commit().Error
 }
 
 // PromoteUser promotes user to admin in a room
@@ -255,17 +277,22 @@ func (s *AdminService) ChangeUserPassword(adminID, targetID uint, newPassword st
 	if !s.IsAdmin(adminID) {
 		return ErrNotAdmin
 	}
-	
+
+	// Validate password length
+	if len(newPassword) < 8 {
+		return errors.New("password should be at least 8 characters long")
+	}
+
 	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(newPassword), bcrypt.DefaultCost)
 	if err != nil {
 		return err
 	}
-	
+
 	var target models.User
 	if err := database.DB.First(&target, targetID).Error; err != nil {
 		return err
 	}
-	
+
 	target.Password = string(hashedPassword)
 	return database.DB.Save(&target).Error
 }
@@ -275,17 +302,29 @@ func (s *AdminService) DeleteUserMessages(adminID, targetID uint, roomID *uint) 
 	if !s.IsAdmin(adminID) {
 		return ErrNotAdmin
 	}
-	
+
 	if roomID != nil {
 		// Delete messages in specific room
-		database.DB.Joins("JOIN channels ON channels.id = messages.channel_id").
-			Where("messages.user_id = ? AND channels.room_id = ?", targetID, *roomID).
-			Delete(&models.Message{})
+		// Get all channels in the room first
+		var channels []models.Channel
+		if err := database.DB.Where("room_id = ?", *roomID).Find(&channels).Error; err != nil {
+			return err
+		}
+		
+		channelIDs := make([]uint, len(channels))
+		for i, ch := range channels {
+			channelIDs[i] = ch.ID
+		}
+		
+		if len(channelIDs) > 0 {
+			database.DB.Where("user_id = ? AND channel_id IN ?", targetID, channelIDs).
+				Delete(&models.Message{})
+		}
 	} else {
 		// Delete all messages
 		database.DB.Where("user_id = ?", targetID).Delete(&models.Message{})
 	}
-	
+
 	return nil
 }
 
@@ -310,6 +349,11 @@ func (s *AdminService) ChangeOwnPassword(userID uint, oldPassword, newPassword s
 	// Check old password
 	if err := bcrypt.CompareHashAndPassword([]byte(user.Password), []byte(oldPassword)); err != nil {
 		return errors.New("invalid current password")
+	}
+
+	// Validate new password length
+	if len(newPassword) < 8 {
+		return errors.New("password should be at least 8 characters long")
 	}
 
 	// Hash new password
@@ -342,9 +386,24 @@ func (s *AdminService) BanUserInRoom(adminID, roomID, targetID uint, reason stri
 		return ErrCannotBanAdmin
 	}
 
-	// Check if target is in room
+	// Use transaction to prevent race conditions
+	tx := database.DB.Begin()
+	defer func() {
+		if r := recover(); r != nil {
+			tx.Rollback()
+		}
+	}()
+
+	// Lock the target user row to prevent concurrent modifications
+	if err := tx.Set("gorm:query_option", "FOR UPDATE").First(&target, targetID).Error; err != nil {
+		tx.Rollback()
+		return err
+	}
+
+	// Check if target is in room (with lock)
 	var membership models.Member
-	if err := database.DB.Where("user_id = ? AND room_id = ?", targetID, roomID).First(&membership).Error; err != nil {
+	if err := tx.Where("user_id = ? AND room_id = ?", targetID, roomID).First(&membership).Error; err != nil {
+		tx.Rollback()
 		return ErrNotInRoom
 	}
 
@@ -358,45 +417,41 @@ func (s *AdminService) BanUserInRoom(adminID, roomID, targetID uint, reason stri
 	// Delete messages if requested
 	if deleteMessages {
 		var channels []models.Channel
-		if err := database.DB.Where("room_id = ?", roomID).Find(&channels).Error; err == nil {
+		if err := tx.Where("room_id = ?", roomID).Find(&channels).Error; err == nil {
 			channelIDs := make([]uint, len(channels))
 			for i, ch := range channels {
 				channelIDs[i] = ch.ID
 			}
 			if len(channelIDs) > 0 {
-				database.DB.Where("user_id = ? AND channel_id IN ?", targetID, channelIDs).Delete(&models.Message{})
+				tx.Where("user_id = ? AND channel_id IN ?", targetID, channelIDs).Delete(&models.Message{})
 			}
 		}
 	}
 
-	// Check for existing ban
-	var existingBan models.RoomBan
-	result := database.DB.Where("room_id = ? AND user_id = ?", roomID, targetID).First(&existingBan)
+	// Use INSERT ... ON CONFLICT UPDATE to atomically create or update ban
+	ban := models.RoomBan{
+		RoomID:          roomID,
+		UserID:          targetID,
+		BannedByID:      &adminID,
+		Reason:          reason,
+		BannedUntil:     bannedUntil,
+		MessagesDeleted: deleteMessages,
+	}
 
-	if result.Error == gorm.ErrRecordNotFound {
-		// Create new ban
-		ban := models.RoomBan{
-			RoomID:          roomID,
-			UserID:          targetID,
-			BannedByID:      &adminID,
-			Reason:          reason,
-			BannedUntil:     bannedUntil,
-			MessagesDeleted: deleteMessages,
-		}
-		database.DB.Create(&ban)
-	} else {
-		// Update existing ban
-		existingBan.Reason = reason
-		existingBan.BannedByID = &adminID
-		existingBan.BannedUntil = bannedUntil
-		existingBan.MessagesDeleted = deleteMessages
-		database.DB.Save(&existingBan)
+	// Use Save which will update if exists, create if not
+	// This prevents race condition between check and create/update
+	if err := tx.Save(&ban).Error; err != nil {
+		tx.Rollback()
+		return err
 	}
 
 	// Delete membership
-	database.DB.Delete(&membership)
+	if err := tx.Delete(&membership).Error; err != nil {
+		tx.Rollback()
+		return err
+	}
 
-	return nil
+	return tx.Commit().Error
 }
 
 // GlobalBanUser bans user globally (superuser only)

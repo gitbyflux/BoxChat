@@ -1,13 +1,14 @@
 package http
 
 import (
-	"net/http"
-	"path/filepath"
-	"strconv"
 	"boxchat/internal/config"
 	"boxchat/internal/middleware"
 	"boxchat/internal/models"
 	"boxchat/internal/services"
+	"net/http"
+	"path/filepath"
+	"strconv"
+
 	"github.com/gin-gonic/gin"
 )
 
@@ -26,15 +27,16 @@ func NewAuthHandler(cfg *config.Config) *AuthHandler {
 func (h *AuthHandler) RegisterRoutes(r *gin.Engine) {
 	auth := r.Group("/")
 	{
-		auth.POST("/api/v1/auth/login", h.LoginAPI)
-		auth.POST("/api/v1/auth/register", h.RegisterAPI)
+		// Apply rate limiting to auth endpoints
+		auth.POST("/api/v1/auth/login", middleware.AuthRateLimiter.Middleware(), h.LoginAPI)
+		auth.POST("/api/v1/auth/register", middleware.AuthRateLimiter.Middleware(), h.RegisterAPI)
 		auth.GET("/api/v1/auth/session", middleware.Auth(), h.GetSession)
 
 		// Legacy routes for SPA
 		auth.GET("/login", h.LoginPage)
 		auth.GET("/register", h.RegisterPage)
-		auth.POST("/login", h.LoginAPI)
-		auth.POST("/register", h.RegisterAPI)
+		auth.POST("/login", middleware.AuthRateLimiter.Middleware(), h.LoginAPI)
+		auth.POST("/register", middleware.AuthRateLimiter.Middleware(), h.RegisterAPI)
 		auth.GET("/logout", h.Logout)
 	}
 }

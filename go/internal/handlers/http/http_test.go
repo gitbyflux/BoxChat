@@ -1,13 +1,14 @@
 package http
 
 import (
+	"boxchat/internal/config"
+	"boxchat/internal/database"
 	"bytes"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"testing"
-	"boxchat/internal/config"
-	"boxchat/internal/database"
+
 	"github.com/gin-gonic/gin"
 )
 
@@ -30,23 +31,26 @@ func setupTestRouter(cfg *config.Config) *gin.Engine {
 // ============================================================================
 
 func TestHealthCheck(t *testing.T) {
+	// Reset database state for test
+	database.ResetForTesting()
+	
 	cfg, err := config.Load()
 	if err != nil {
 		t.Fatalf("Failed to load config: %v", err)
 	}
-	
+
 	// Initialize database for tests
 	if err := database.Init(cfg); err != nil {
 		t.Fatalf("Failed to initialize database: %v", err)
 	}
-	
+
 	router := setupTestRouter(cfg)
-	
+
 	// Test GET /api/v1/reactions (public endpoint)
 	req, _ := http.NewRequest("GET", "/api/v1/reactions", nil)
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, req)
-	
+
 	// Should return 200
 	if w.Code != 200 {
 		t.Errorf("Expected status 200, got %d. Body: %s", w.Code, w.Body.String())

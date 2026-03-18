@@ -53,8 +53,9 @@ var Global *Config
 func generateSecretKey() string {
 	bytes := make([]byte, 32)
 	if _, err := rand.Read(bytes); err != nil {
-		// Fallback if random generation fails
-		return "INSECURE_FALLBACK_KEY_CHANGE_IMMEDIATELY"
+		// Random generation failure is extremely rare and indicates a serious system issue
+		// Panicking is safer than using a predictable fallback key
+		panic(fmt.Sprintf("[CONFIG] CRITICAL: Failed to generate secure random key: %v. Please check system entropy.", err))
 	}
 	return hex.EncodeToString(bytes)
 }

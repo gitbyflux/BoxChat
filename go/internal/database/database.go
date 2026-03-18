@@ -1,21 +1,51 @@
 package database
 
 import (
+	"boxchat/internal/config"
+	"boxchat/internal/models"
 	"crypto/rand"
 	"fmt"
 	"os"
 	"path/filepath"
-	"boxchat/internal/config"
-	"boxchat/internal/models"
+	"sync"
+
+	"golang.org/x/crypto/bcrypt"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
-	"golang.org/x/crypto/bcrypt"
 )
 
-var DB *gorm.DB
+var (
+	DB        *gorm.DB
+	initOnce  sync.Once
+	initError error
+	initMu    sync.Mutex
+)
+
+// ResetForTesting resets the initialization state for testing purposes.
+// This should only be used in tests.
+func ResetForTesting() {
+	initMu.Lock()
+	defer initMu.Unlock()
+	if DB != nil {
+		sqlDB, err := DB.DB()
+		if err == nil {
+			sqlDB.Close()
+		}
+	}
+	initOnce = sync.Once{}
+	initError = nil
+	DB = nil
+}
 
 func Init(cfg *config.Config) error {
+	initOnce.Do(func() {
+		initError = initDatabase(cfg)
+	})
+	return initError
+}
+
+func initDatabase(cfg *config.Config) error {
 	// Ensure instance directory exists
 	instanceDir := filepath.Dir(cfg.DBPath)
 	if err := os.MkdirAll(instanceDir, 0755); err != nil {
@@ -148,4 +178,30 @@ func CheckPasswordHash(password, hash string) bool {
 
 func GetDB() *gorm.DB {
 	return DB
+}
+
+// InitInMemoryDB initializes an in-memory SQLite database for testing
+func InitInMemoryDB() error {
+	// Reset any existing connection
+	ResetForTesting()
+	
+	var err error
+	DB, err = gorm.Open(sqlite.Open("file::memory:?cache=shared"), &gorm.Config{
+		Logger: logger.Default.LogMode(logger.Silent),
+	})
+	if err != nil {
+		return fmt.Errorf("failed to connect to in-memory database: %w", err)
+	}
+
+	// Enable foreign key constraints
+	if err := DB.Exec("PRAGMA foreign_keys = ON").Error; err != nil {
+		return fmt.Errorf("failed to enable foreign keys: %w", err)
+	}
+
+	// Run migrations
+	if err := AutoMigrate(); err != nil {
+		return fmt.Errorf("failed to migrate in-memory database: %w", err)
+	}
+
+	return nil
 }

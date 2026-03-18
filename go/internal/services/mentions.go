@@ -1,11 +1,11 @@
 package services
 
 import (
+	"boxchat/internal/database"
+	"boxchat/internal/models"
 	"regexp"
 	"sort"
 	"strings"
-	"boxchat/internal/database"
-	"boxchat/internal/models"
 )
 
 type MentionData struct {
@@ -29,42 +29,42 @@ func (s *MentionService) ParseMentions(content string, roomID uint, userID uint)
 	if text == "" {
 		return &MentionData{}
 	}
-	
+
 	// Find all @mentions
 	re := regexp.MustCompile(`@([a-zA-Z0-9_-]{2,60})`)
 	tokens := re.FindAllStringSubmatch(text, -1)
-	
+
 	if len(tokens) == 0 {
 		return &MentionData{}
 	}
-	
+
 	// Get all room members for username lookup
 	var members []models.Member
 	database.DB.Joins("JOIN users ON users.id = members.user_id").
 		Where("members.room_id = ?", roomID).
 		Preload("User").
 		Find(&members)
-	
+
 	usernameToUser := make(map[string]*models.User)
 	for _, m := range members {
 		if m.User.ID != 0 {
 			usernameToUser[strings.ToLower(m.User.Username)] = &m.User
 		}
 	}
-	
+
 	// Get all room roles
 	var roles []models.Role
 	database.DB.Where("room_id = ?", roomID).Find(&roles)
-	
+
 	roleTagToRole := make(map[string]*models.Role)
 	for i := range roles {
 		roleTagToRole[strings.ToLower(roles[i].MentionTag)] = &roles[i]
 	}
-	
+
 	// Separate username tokens and role tokens
 	usernameTokens := make(map[string]bool)
 	roleTokens := make(map[string]bool)
-	
+
 	for _, token := range tokens {
 		if len(token) > 1 {
 			tag := strings.ToLower(token[1])
@@ -76,7 +76,7 @@ func (s *MentionService) ParseMentions(content string, roomID uint, userID uint)
 			}
 		}
 	}
-	
+
 	// Find mentioned users by username
 	mentionedUsers := make([]*models.User, 0)
 	for uname := range usernameTokens {
@@ -84,11 +84,11 @@ func (s *MentionService) ParseMentions(content string, roomID uint, userID uint)
 			mentionedUsers = append(mentionedUsers, user)
 		}
 	}
-	
+
 	// Check role mention permissions and get allowed roles
 	allowedRoles := make([]*models.Role, 0)
 	deniedRoleTags := make([]string, 0)
-	
+
 	for tag := range roleTokens {
 		role := roleTagToRole[tag]
 		if s.canUserMentionRole(userID, roomID, role) {
@@ -97,17 +97,24 @@ func (s *MentionService) ParseMentions(content string, roomID uint, userID uint)
 			deniedRoleTags = append(deniedRoleTags, role.MentionTag)
 		}
 	}
-	
-	// Get all user IDs from role mentions
-	roleUserIDs := make(map[uint]bool)
+
+	// OPTIMIZATION: Get all member roles in one query instead of N+1
+	roleIDs := make([]uint, 0, len(allowedRoles))
 	for _, role := range allowedRoles {
-		var memberRoles []models.MemberRole
-		database.DB.Where("room_id = ? AND role_id = ?", roomID, role.ID).Find(&memberRoles)
-		for _, mr := range memberRoles {
-			roleUserIDs[mr.UserID] = true
-		}
+		roleIDs = append(roleIDs, role.ID)
 	}
-	
+
+	var allMemberRoles []models.MemberRole
+	if len(roleIDs) > 0 {
+		database.DB.Where("room_id = ? AND role_id IN ?", roomID, roleIDs).Find(&allMemberRoles)
+	}
+
+	// Build map of role_id -> user_ids
+	roleUserIDs := make(map[uint]bool)
+	for _, mr := range allMemberRoles {
+		roleUserIDs[mr.UserID] = true
+	}
+
 	// Combine all mentioned user IDs
 	allMentionedUserIDs := make(map[uint]bool)
 	for _, user := range mentionedUsers {
@@ -116,24 +123,36 @@ func (s *MentionService) ParseMentions(content string, roomID uint, userID uint)
 	for uid := range roleUserIDs {
 		allMentionedUserIDs[uid] = true
 	}
-	
-	// Get usernames for all mentioned user IDs
-	allMentionedUsernames := make([]string, 0)
-	sortedUserIDs := make([]uint, 0)
+
+	// OPTIMIZATION: Get all usernames in one query instead of N+1
+	sortedUserIDs := make([]uint, 0, len(allMentionedUserIDs))
 	for uid := range allMentionedUserIDs {
 		sortedUserIDs = append(sortedUserIDs, uid)
 	}
 	sort.Slice(sortedUserIDs, func(i, j int) bool {
 		return sortedUserIDs[i] < sortedUserIDs[j]
 	})
-	
+
+	// Single query to get all mentioned users
+	var mentionedUsersList []models.User
+	if len(sortedUserIDs) > 0 {
+		database.DB.Where("id IN ?", sortedUserIDs).Find(&mentionedUsersList)
+	}
+
+	// Build username map for quick lookup
+	userIDToUsername := make(map[uint]string)
+	for _, user := range mentionedUsersList {
+		userIDToUsername[user.ID] = user.Username
+	}
+
+	// Build usernames list in sorted order
+	allMentionedUsernames := make([]string, 0, len(sortedUserIDs))
 	for _, uid := range sortedUserIDs {
-		var user models.User
-		if err := database.DB.First(&user, uid).Error; err == nil {
-			allMentionedUsernames = append(allMentionedUsernames, user.Username)
+		if username, exists := userIDToUsername[uid]; exists {
+			allMentionedUsernames = append(allMentionedUsernames, username)
 		}
 	}
-	
+
 	// Check for @everyone
 	mentionEveryone := false
 	for _, role := range allowedRoles {
@@ -142,15 +161,15 @@ func (s *MentionService) ParseMentions(content string, roomID uint, userID uint)
 			break
 		}
 	}
-	
+
 	// Build mentioned role IDs and tags
-	mentionedRoleIDs := make([]uint, 0)
-	mentionedRoleTags := make([]string, 0)
+	mentionedRoleIDs := make([]uint, 0, len(allowedRoles))
+	mentionedRoleTags := make([]string, 0, len(allowedRoles))
 	for _, role := range allowedRoles {
 		mentionedRoleIDs = append(mentionedRoleIDs, role.ID)
 		mentionedRoleTags = append(mentionedRoleTags, role.MentionTag)
 	}
-	
+
 	return &MentionData{
 		MentionEveryone:    mentionEveryone,
 		MentionedUserIDs:   sortedUserIDs,

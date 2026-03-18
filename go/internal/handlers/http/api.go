@@ -1,6 +1,12 @@
 package http
 
 import (
+	"boxchat/internal/config"
+	"boxchat/internal/database"
+	"boxchat/internal/handlers/socketio"
+	"boxchat/internal/middleware"
+	"boxchat/internal/models"
+	"boxchat/internal/services"
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
@@ -10,12 +16,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"time"
-	"boxchat/internal/config"
-	"boxchat/internal/database"
-	"boxchat/internal/handlers/socketio"
-	"boxchat/internal/middleware"
-	"boxchat/internal/models"
-	"boxchat/internal/services"
+
 	"github.com/gin-gonic/gin"
 	"golang.org/x/crypto/bcrypt"
 	"gorm.io/gorm"
@@ -89,7 +90,8 @@ func (h *APIHandler) RegisterRoomsRoutes(r *gin.Engine) {
 	r.PATCH("/api/v1/room/:room_id/settings", middleware.Auth(), h.UpdateRoomSettings)
 	r.POST("/api/v1/room/:room_id/avatar/delete", middleware.Auth(), h.DeleteRoomAvatar)
 	r.DELETE("/api/v1/room/:room_id/delete", middleware.Auth(), h.DeleteRoom)
-	
+	r.DELETE("/api/v1/room/:room_id/banner/delete", middleware.Auth(), h.DeleteRoomBanner)
+
 	// Room bans
 	r.GET("/api/v1/room/:room_id/bans", middleware.Auth(), h.GetRoomBans)
 	r.POST("/api/v1/room/:room_id/unban/:user_id", middleware.Auth(), h.UnbanUserFromRoom)
@@ -171,7 +173,7 @@ func (h *APIHandler) RegisterRoomsExtraRoutes(r *gin.Engine) {
 // RegisterBannerRoutes registers room banner routes
 func (h *APIHandler) RegisterBannerRoutes(r *gin.Engine) {
 	r.POST("/api/v1/room/:room_id/banner", middleware.Auth(), h.UploadRoomBanner)
-	r.DELETE("/api/v1/room/:room_id/banner/delete", middleware.Auth(), h.DeleteRoomBanner)
+	// DELETE route is registered in RegisterRoomsRoutes
 }
 
 func (h *APIHandler) CreateRoomInvite(c *gin.Context) {
@@ -351,8 +353,8 @@ func (h *APIHandler) GetAccessibleChannels(c *gin.Context) {
 		RoomType    string `json:"room_type"`
 	}
 
-	var channels []ChannelWithRoom
-	
+	channels := []ChannelWithRoom{} // Инициализируем как пустой срез, а не nil
+
 	// Get all channels for these rooms in a single query
 	var roomIDs []uint
 	for _, m := range memberships {
@@ -608,9 +610,9 @@ func (h *APIHandler) ForwardMessage(c *gin.Context) {
 		return
 	}
 
-	// Get original message
+	// Get original message with user
 	var message models.Message
-	if err := database.DB.First(&message, messageID).Error; err != nil {
+	if err := database.DB.Preload("User").First(&message, messageID).Error; err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "Message not found"})
 		return
 	}
