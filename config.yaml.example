@@ -1,0 +1,41 @@
+# BoxChat Configuration
+# Скопируйте этот файл в config.yaml и настройте под себя
+
+# База данных
+database:
+  path: instance/boxchat.db
+
+# Сервер
+server:
+  host: 127.0.0.1
+  port: 5000
+
+# Безопасность
+# Оставьте пустым для автогенерации (только для dev!)
+# Для production сгенерируйте: openssl rand -hex 32
+security:
+  secret_key: ""
+
+# Загрузка файлов
+upload:
+  folder: uploads
+  max_size: 52428800  # 50MB в байтах
+
+# Сессии и куки
+session:
+  lifetime_days: 30
+  cookie_name: boxchat_session
+  http_only: true
+  same_site: Lax
+  secure: false  # Установите true для HTTPS
+
+remember_cookie:
+  duration_days: 30
+  name: boxchat_remember
+  http_only: true
+  same_site: Lax
+  secure: false
+
+# Внешние сервисы
+giphy:
+  api_key: ""  # Получите на https://developers.giphy.com/

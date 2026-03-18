@@ -5,8 +5,6 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -14,6 +12,7 @@ import (
 	"boxchat/internal/config"
 	"boxchat/internal/database"
 	"boxchat/internal/models"
+	"boxchat/internal/testutil"
 
 	"github.com/gin-gonic/gin"
 	"golang.org/x/crypto/bcrypt"
@@ -26,21 +25,7 @@ import (
 func setupSearchTestDB(t *testing.T) (*config.Config, *gin.Engine, func()) {
 	t.Helper()
 
-	database.ResetForTesting()
-
-	tempDir := t.TempDir()
-	dbPath := filepath.Join(tempDir, "test.db")
-	os.Setenv("SQLALCHEMY_DATABASE_URI", "sqlite:///"+dbPath)
-	os.Setenv("SECRET_KEY", "test_secret_key_search")
-
-	cfg, err := config.Load()
-	if err != nil {
-		t.Fatalf("Failed to load config: %v", err)
-	}
-
-	if err := database.Init(cfg); err != nil {
-		t.Fatalf("Failed to initialize database: %v", err)
-	}
+	cfg, dbCleanup := testutil.SetupTestDB(t)
 
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
@@ -52,12 +37,7 @@ func setupSearchTestDB(t *testing.T) (*config.Config, *gin.Engine, func()) {
 	apiHandler.RegisterRoutes(router)
 	apiHandler.RegisterSearchRoutes(router)
 
-	cleanup := func() {
-		os.Unsetenv("SQLALCHEMY_DATABASE_URI")
-		os.Unsetenv("SECRET_KEY")
-	}
-
-	return cfg, router, cleanup
+	return cfg, router, dbCleanup
 }
 
 func hashPasswordSearch(t *testing.T, password string) string {

@@ -17,7 +17,7 @@ cd go
 go mod tidy
 go build -o ../boxchat-go ./cmd/server
 
-# Запуск
+# Запуск с переменными окружения
 ADMIN_PASSWORD="YourPassword123!" \
 SECRET_KEY="$(openssl rand -hex 32)" \
 ALLOWED_ORIGINS="http://localhost,http://127.0.0.1" \
@@ -36,112 +36,194 @@ npm run dev
 
 ```
 BoxChat/
-├── go/              # Бэкенд
-├── frontend/        # Фронтенд
-├── config.json      # Конфигурация
-├── uploads/         # Файлы
-└── instance/        # БД
+├── go/                    # Бэкенд на Go
+│   ├── cmd/
+│   │   └── server/        # Точка входа (main.go)
+│   └── internal/          # Внутренние пакеты
+│       ├── config/        # Конфигурация
+│       ├── database/      # Работа с БД
+│       ├── handlers/      # HTTP обработчики
+│       ├── middleware/    # Middleware (CORS, auth, logger)
+│       ├── models/        # Модели данных
+│       ├── services/      # Бизнес-логика
+│       ├── utils/         # Утилиты
+│       └── testutil/      # Тестовые хелперы
+├── frontend/              # Фронтенд на React
+├── config.yaml            # Конфигурация приложения
+├── uploads/               # Загруженные файлы
+└── instance/              # SQLite база данных
 ```
+
+## Конфигурация
+
+**Файл:** `config.yaml` (скопируйте `config.yaml.example`)
+
+Основные поля:
+
+| Секция | Поле | Тип | Описание | Default |
+|--------|------|-----|----------|---------|
+| `database` | `path` | string | Путь к SQLite базе | `instance/boxchat.db` |
+| `server` | `host` | string | Хост сервера | `127.0.0.1` |
+| `server` | `port` | int | Порт сервера | `5000` |
+| `security` | `secret_key` | string | Ключ сессий/JWT | автогенерация |
+| `upload` | `folder` | string | Папка загрузок | `uploads` |
+| `upload` | `max_size` | int | Макс. размер файла (байты) | `52428800` (50MB) |
+| `session` | `lifetime_days` | int | Время жизни сессии (дни) | `30` |
+| `giphy` | `api_key` | string | Giphy API ключ | — |
+
+Полный пример — в [`config.yaml.example`](config.yaml.example).
+
+### Переменные окружения
+
+Приоритет над `config.yaml`. Можно использовать для sensitive данных.
+
+| Переменная | Описание | Default |
+|------------|----------|---------|
+| `SECRET_KEY` | Секретный ключ для сессий | автогенерация |
+| `SERVER_HOST` | Хост сервера | `127.0.0.1` |
+| `SERVER_PORT` | Порт сервера | `5000` |
+| `DATABASE_PATH` | Путь к SQLite базе | `instance/boxchat.db` |
+| `UPLOAD_FOLDER` | Папка для загрузок | `uploads` |
+| `MAX_CONTENT_LENGTH` | Макс. размер файла (байты) | `52428800` (50MB) |
+| `GIPHY_API_KEY` | API ключ Giphy | — |
+| `ALLOWED_ORIGINS` | CORS origin (через запятую) | — |
+| `ADMIN_PASSWORD` | Пароль первого админа | — |
+
+Пример запуска:
+
+```bash
+SECRET_KEY="my_super_secret_key" \
+SERVER_PORT="8080" \
+./boxchat-go
+```
+
+---
 
 ## API Endpoints
 
 ### Аутентификация
-- `POST /api/v1/auth/login` — Вход
-- `POST /api/v1/auth/register` — Регистрация
-- `GET /api/v1/auth/session` — Проверка сессии
-- `GET /logout` — Выход
+| Метод | Endpoint | Описание |
+|-------|----------|----------|
+| `POST` | `/api/v1/auth/login` | Вход |
+| `POST` | `/api/v1/auth/register` | Регистрация |
+| `GET` | `/api/v1/auth/session` | Проверка сессии |
+| `GET` | `/logout` | Выход |
 
 ### Пользователь
-- `GET /api/v1/user/me` — Текущий пользователь
-- `PATCH /api/v1/user/settings` — Обновить настройки
-- `POST /api/v1/user/avatar` — Загрузить аватар
-- `DELETE /api/v1/user/avatar` — Удалить аватар
-- `POST /api/v1/user/delete` — Удалить аккаунт
+| Метод | Endpoint | Описание |
+|-------|----------|----------|
+| `GET` | `/api/v1/user/me` | Текущий пользователь |
+| `PATCH` | `/api/v1/user/settings` | Обновить настройки |
+| `POST` | `/api/v1/user/avatar` | Загрузить аватар |
+| `DELETE` | `/api/v1/user/avatar` | Удалить аватар |
+| `POST` | `/api/v1/user/delete` | Удалить аккаунт |
 
 ### Друзья
-- `GET /api/v1/friends/status/:user_id` — Статус дружбы
-- `POST /api/v1/friends/request` — Отправить запрос
-- `GET /api/v1/friends/requests` — Список запросов
-- `POST /api/v1/friends/requests/:id/respond` — Ответить
-- `DELETE /api/v1/friends/requests/:id` — Отменить
-- `GET /api/v1/friends` — Список друзей
-- `DELETE /api/v1/friends/:id` — Удалить друга
-- `POST /api/v1/dm/:user_id/create` — Создать DM
+| Метод | Endpoint | Описание |
+|-------|----------|----------|
+| `GET` | `/api/v1/friends/status/:user_id` | Статус дружбы |
+| `POST` | `/api/v1/friends/request` | Отправить запрос |
+| `GET` | `/api/v1/friends/requests` | Список запросов |
+| `POST` | `/api/v1/friends/requests/:id/respond` | Ответить на запрос |
+| `DELETE` | `/api/v1/friends/requests/:id` | Отменить запрос |
+| `GET` | `/api/v1/friends` | Список друзей |
+| `DELETE` | `/api/v1/friends/:id` | Удалить друга |
+| `POST` | `/api/v1/dm/:user_id/create` | Создать DM |
 
 ### Поиск
-- `GET /api/v1/search/users?q=&limit=20` — Пользователи
-- `GET /api/v1/search/servers?q=&limit=20` — Серверы
-- `GET /api/v1/search?q=&limit=10` — Глобальный поиск
+| Метод | Endpoint | Описание |
+|-------|----------|----------|
+| `GET` | `/api/v1/search/users` | Поиск пользователей (`?q=`, `?limit=`) |
+| `GET` | `/api/v1/search/servers` | Поиск серверов |
+| `GET` | `/api/v1/search` | Глобальный поиск |
 
 ### Комнаты и каналы
-- `GET /api/v1/rooms` — Список комнат
-- `GET /api/v1/room/:room_id` — Инфо о комнате
-- `POST /api/v1/room/:room_id/join` — Войти
-- `GET /api/v1/room/:room_id/members` — Участники
-- `GET /api/v1/room/:room_id/roles` — Роли
-- `GET /api/v1/channel/:channel_id/messages` — Сообщения
-- `POST /api/v1/channel/:channel_id/mark_read` — Отметить прочитанным
+| Метод | Endpoint | Описание |
+|-------|----------|----------|
+| `GET` | `/api/v1/rooms` | Список комнат |
+| `GET` | `/api/v1/room/:room_id` | Инфо о комнате |
+| `POST` | `/api/v1/room/:room_id/join` | Войти в комнату |
+| `GET` | `/api/v1/room/:room_id/members` | Участники |
+| `GET` | `/api/v1/room/:room_id/roles` | Роли |
+| `GET` | `/api/v1/channel/:channel_id/messages` | Сообщения канала |
+| `POST` | `/api/v1/channel/:channel_id/mark_read` | Отметить прочитанным |
 
 ### Управление каналами
-- `POST /api/v1/room/:room_id/add_channel` — Создать канал
-- `PATCH /api/v1/channel/:channel_id/edit` — Редактировать
-- `DELETE /api/v1/channel/:channel_id/delete` — Удалить
-- `PATCH /api/v1/channel/:channel_id/permissions` — Права доступа
+| Метод | Endpoint | Описание |
+|-------|----------|----------|
+| `POST` | `/api/v1/room/:room_id/add_channel` | Создать канал |
+| `PATCH` | `/api/v1/channel/:channel_id/edit` | Редактировать |
+| `DELETE` | `/api/v1/channel/:channel_id/delete` | Удалить |
+| `PATCH` | `/api/v1/channel/:channel_id/permissions` | Права доступа |
 
 ### Управление комнатами
-- `GET /api/v1/room/:room_id/settings` — Настройки
-- `PATCH /api/v1/room/:room_id/settings` — Обновить
-- `POST /api/v1/room/:room_id/avatar/delete` — Удалить аватар
-- `DELETE /api/v1/room/:room_id/delete` — Удалить комнату
-- `GET /api/v1/room/:room_id/bans` — Баны
-- `POST /api/v1/room/:room_id/unban/:user_id` — Разбанить
+| Метод | Endpoint | Описание |
+|-------|----------|----------|
+| `GET` | `/api/v1/room/:room_id/settings` | Настройки |
+| `PATCH` | `/api/v1/room/:room_id/settings` | Обновить |
+| `POST` | `/api/v1/room/:room_id/avatar/delete` | Удалить аватар |
+| `DELETE` | `/api/v1/room/:room_id/delete` | Удалить комнату |
+| `GET` | `/api/v1/room/:room_id/bans` | Баны |
+| `POST` | `/api/v1/room/:room_id/unban/:user_id` | Разбанить |
 
 ### Роли
-- `POST /api/v1/room/:room_id/roles` — Создать роль
-- `PATCH /api/v1/room/:room_id/roles/:role_id` — Обновить
-- `DELETE /api/v1/room/:room_id/roles/:role_id` — Удалить
-- `PATCH /api/v1/room/:room_id/roles/:role_id/permissions` — Права
-- `POST /api/v1/room/:room_id/members/:user_id/roles` — Назначить
-- `DELETE /api/v1/room/:room_id/members/:user_id/roles/:role_id` — Снять
+| Метод | Endpoint | Описание |
+|-------|----------|----------|
+| `POST` | `/api/v1/room/:room_id/roles` | Создать роль |
+| `PATCH` | `/api/v1/room/:room_id/roles/:role_id` | Обновить |
+| `DELETE` | `/api/v1/room/:room_id/roles/:role_id` | Удалить |
+| `PATCH` | `/api/v1/room/:room_id/roles/:role_id/permissions` | Права роли |
+| `POST` | `/api/v1/room/:room_id/members/:user_id/roles` | Назначить роль |
+| `DELETE` | `/api/v1/room/:room_id/members/:user_id/roles/:role_id` | Снять роль |
 
 ### Сообщения
-- `POST /api/v1/message/:id/reaction` — Реакция
-- `POST /api/v1/message/:id/delete` — Удалить
-- `POST /api/v1/message/:id/edit` — Редактировать
-- `POST /api/v1/message/:id/forward` — Переслать
+| Метод | Endpoint | Описание |
+|-------|----------|----------|
+| `POST` | `/api/v1/message/:id/reaction` | Добавить реакцию |
+| `POST` | `/api/v1/message/:id/delete` | Удалить сообщение |
+| `POST` | `/api/v1/message/:id/edit` | Редактировать сообщение |
+| `POST` | `/api/v1/message/:id/forward` | Переслать сообщение |
 
 ### Музыка
-- `POST /api/v1/music/add` — Добавить трек
-- `GET /api/v1/user/music` — Список треков
-- `POST /api/v1/music/:id/delete` — Удалить
+| Метод | Endpoint | Описание |
+|-------|----------|----------|
+| `POST` | `/api/v1/music/add` | Добавить трек |
+| `GET` | `/api/v1/user/music` | Список треков |
+| `POST` | `/api/v1/music/:id/delete` | Удалить трек |
 
 ### Стикеры
-- `POST /api/v1/sticker_packs` — Создать пак
-- `GET /api/v1/sticker_packs` — Список
-- `GET /api/v1/sticker_packs/:id` — Инфо
-- `PATCH /api/v1/sticker_packs/:id` — Обновить
-- `DELETE /api/v1/sticker_packs/:id` — Удалить
-- `POST /api/v1/sticker_packs/:id/stickers` — Добавить стикер
-- `DELETE /api/v1/stickers/:id` — Удалить
+| Метод | Endpoint | Описание |
+|-------|----------|----------|
+| `POST` | `/api/v1/sticker_packs` | Создать пак |
+| `GET` | `/api/v1/sticker_packs` | Список паков |
+| `GET` | `/api/v1/sticker_packs/:id` | Инфо о паке |
+| `PATCH` | `/api/v1/sticker_packs/:id` | Обновить пак |
+| `DELETE` | `/api/v1/sticker_packs/:id` | Удалить пак |
+| `POST` | `/api/v1/sticker_packs/:id/stickers` | Добавить стикер |
+| `DELETE` | `/api/v1/stickers/:id` | Удалить стикер |
 
 ### Администрирование
-- `POST /api/v1/admin/user/:id/ban` — Бан
-- `POST /api/v1/admin/user/:id/unban` — Разбан
-- `POST /api/v1/admin/user/:id/kick_from_room/:room_id` — Кик
-- `POST /api/v1/admin/user/:id/mute_in_room/:room_id` — Мут
-- `POST /api/v1/admin/user/:id/unmute_in_room/:room_id` — Анмут
-- `POST /api/v1/admin/user/:id/promote` — Повысить
-- `POST /api/v1/admin/user/:id/demote` — Понизить
-- `POST /api/v1/admin/user/:id/delete_messages` — Удалить сообщения
+| Метод | Endpoint | Описание |
+|-------|----------|----------|
+| `POST` | `/api/v1/admin/user/:id/ban` | Забанить |
+| `POST` | `/api/v1/admin/user/:id/unban` | Разбанить |
+| `POST` | `/api/v1/admin/user/:id/kick_from_room/:room_id` | Кикнуть из комнаты |
+| `POST` | `/api/v1/admin/user/:id/mute_in_room/:room_id` | Замутить в комнате |
+| `POST` | `/api/v1/admin/user/:id/unmute_in_room/:room_id` | Снять мут |
+| `POST` | `/api/v1/admin/user/:id/promote` | Повысить |
+| `POST` | `/api/v1/admin/user/:id/demote` | Понизить |
+| `POST` | `/api/v1/admin/user/:id/delete_messages` | Удалить сообщения |
 
 ### Дополнительно
-- `POST /api/v1/room/:room_id/invite` — Инвайт
-- `GET /api/v1/join/:token` — Войти по инвайту
-- `POST /api/v1/room/:room_id/leave` — Покинуть комнату
-- `GET /api/v1/gifs/trending` — Trending GIF
-- `GET /api/v1/gifs/search?q=` — Поиск GIF
-- `POST /upload_file` — Загрузить файл
-- `GET /uploads/:path` — Получить файл
+| Метод | Endpoint | Описание |
+|-------|----------|----------|
+| `POST` | `/api/v1/room/:room_id/invite` | Создать инвайт |
+| `GET` | `/api/v1/join/:token` | Войти по инвайту |
+| `POST` | `/api/v1/room/:room_id/leave` | Покинуть комнату |
+| `GET` | `/api/v1/gifs/trending` | Trending GIF |
+| `GET` | `/api/v1/gifs/search` | Поиск GIF (`?q=`) |
+| `POST` | `/upload_file` | Загрузить файл |
+| `GET` | `/uploads/:path` | Получить файл |
 
 ---
 
@@ -150,6 +232,7 @@ BoxChat/
 **Подключение:** `GET /socket.io` (требуется аутентификация)
 
 ### Клиент → Сервер
+
 | Событие | Payload |
 |---------|---------|
 | `join` | `{ channel_id }` |
@@ -157,6 +240,7 @@ BoxChat/
 | `read` | `{ channel_id }` |
 
 ### Сервер → Клиент
+
 | Событие | Описание |
 |---------|----------|
 | `connect` | Подключение установлено |
@@ -190,31 +274,90 @@ BoxChat/
 | `/kick` | `/kick @username [reason]` |
 | `/ban` | `/ban @username [duration] [reason]` |
 
-**Разрешения:** `mute_members`, `kick_members`, `ban_members`
+**Требуемые разрешения:** `mute_members`, `kick_members`, `ban_members`
 
 ---
 
 ## Упоминания
 
-- `@username` — пользователь
-- `@role` — роль (если есть разрешение)
-- `@everyone` — все в комнате (если есть разрешение)
+- `@username` — упомянуть пользователя
+- `@role` — упомянуть роль (требуется разрешение)
+- `@everyone` — упомянуть всех в комнате (требуется разрешение)
 
 ---
 
 ## Разрешения ролей
 
-`manage_server`, `manage_roles`, `manage_channels`, `invite_members`, `delete_server`, `delete_messages`, `kick_members`, `ban_members`, `mute_members`
+| Разрешение | Описание |
+|------------|----------|
+| `manage_server` | Управление сервером |
+| `manage_roles` | Создание и редактирование ролей |
+| `manage_channels` | Управление каналами |
+| `invite_members` | Приглашение участников |
+| `delete_server` | Удаление сервера |
+| `delete_messages` | Удаление чужих сообщений |
+| `kick_members` | Кик участников |
+| `ban_members` | Бан участников |
+| `mute_members` | Мут участников |
 
 ---
 
-## Конфигурация
+## Безопасность
 
-**Файл:** `config.json`
+- **Пароли:** хешируются через `bcrypt`
+- **Сессии:** JWT + httpOnly cookies
+- **CORS:** настраиваемый список разрешённых origin
+- **Rate limiting:** защита от brute-force
+- **Security headers:** X-Frame-Options, X-Content-Type-Options, CSP
 
-**Переменные окружения:**
-- `ADMIN_PASSWORD` — пароль админа
-- `SECRET_KEY` — ключ сессии
-- `ALLOWED_ORIGINS` — CORS (через запятую)
-- `SERVER_HOST` — хост (default: 127.0.0.1)
-- `SERVER_PORT` — порт (default: 5000)
+---
+
+## Тестирование
+
+```bash
+cd go
+go test ./... -v
+```
+
+Запуск с покрытием:
+
+```bash
+go test ./... -coverprofile=coverage.out
+go tool cover -html=coverage.out
+```
+
+---
+
+## Примеры API запросов
+
+### Регистрация
+
+```bash
+curl -X POST http://localhost:5000/api/v1/auth/register \
+  -H "Content-Type: application/json" \
+  -d '{"username": "user", "password": "password123", "email": "user@example.com"}'
+```
+
+### Вход
+
+```bash
+curl -X POST http://localhost:5000/api/v1/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"username": "user", "password": "password123"}' \
+  -c cookies.txt
+```
+
+### Отправка сообщения (WebSocket)
+
+```javascript
+const socket = io('http://localhost:5000/socket.io');
+
+socket.on('connect', () => {
+  socket.emit('send_message', {
+    room_id: 1,
+    channel_id: 2,
+    msg: 'Hello, World!',
+    message_type: 'text'
+  });
+});
+```

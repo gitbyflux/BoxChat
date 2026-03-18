@@ -22,12 +22,12 @@ func TestInit_Success(t *testing.T) {
 	
 	tempDir := t.TempDir()
 	dbPath := filepath.Join(tempDir, "test.db")
-	os.Setenv("SQLALCHEMY_DATABASE_URI", "sqlite:///"+dbPath)
+	os.Setenv("DATABASE_PATH", ""+dbPath)
 	os.Setenv("ADMIN_PASSWORD", "TestAdminPass123!")
 	os.Setenv("SECRET_KEY", "test_secret_key_12345678901234567890123456789012")
 
 	defer func() {
-		os.Unsetenv("SQLALCHEMY_DATABASE_URI")
+		os.Unsetenv("DATABASE_PATH")
 		os.Unsetenv("ADMIN_PASSWORD")
 		os.Unsetenv("SECRET_KEY")
 	}()
@@ -60,14 +60,14 @@ func TestInit_Success(t *testing.T) {
 func TestInit_CreatesInstanceDirectory(t *testing.T) {
 	// Reset initialization state for test
 	ResetForTesting()
-	
+
 	tempDir := t.TempDir()
 	dbPath := filepath.Join(tempDir, "instance", "subdir", "test.db")
-	os.Setenv("SQLALCHEMY_DATABASE_URI", "sqlite:///"+dbPath)
+	os.Setenv("DATABASE_PATH", dbPath)
 	os.Setenv("SECRET_KEY", "test_secret_key_12345678901234567890123456789012")
 
 	defer func() {
-		os.Unsetenv("SQLALCHEMY_DATABASE_URI")
+		os.Unsetenv("DATABASE_PATH")
 		os.Unsetenv("SECRET_KEY")
 	}()
 
@@ -94,11 +94,11 @@ func TestInit_EnablesForeignKeys(t *testing.T) {
 	
 	tempDir := t.TempDir()
 	dbPath := filepath.Join(tempDir, "test.db")
-	os.Setenv("SQLALCHEMY_DATABASE_URI", "sqlite:///"+dbPath)
+	os.Setenv("DATABASE_PATH", ""+dbPath)
 	os.Setenv("SECRET_KEY", "test_secret_key_12345678901234567890123456789012")
 
 	defer func() {
-		os.Unsetenv("SQLALCHEMY_DATABASE_URI")
+		os.Unsetenv("DATABASE_PATH")
 		os.Unsetenv("SECRET_KEY")
 	}()
 
@@ -128,12 +128,12 @@ func TestInit_AdminUserWithCustomPassword(t *testing.T) {
 	
 	tempDir := t.TempDir()
 	dbPath := filepath.Join(tempDir, "test.db")
-	os.Setenv("SQLALCHEMY_DATABASE_URI", "sqlite:///"+dbPath)
+	os.Setenv("DATABASE_PATH", ""+dbPath)
 	os.Setenv("ADMIN_PASSWORD", "MyCustomPassword123!")
 	os.Setenv("SECRET_KEY", "test_secret_key_12345678901234567890123456789012")
 
 	defer func() {
-		os.Unsetenv("SQLALCHEMY_DATABASE_URI")
+		os.Unsetenv("DATABASE_PATH")
 		os.Unsetenv("ADMIN_PASSWORD")
 		os.Unsetenv("SECRET_KEY")
 	}()
@@ -166,11 +166,11 @@ func TestInit_AdminUserAlreadyExists(t *testing.T) {
 	
 	tempDir := t.TempDir()
 	dbPath := filepath.Join(tempDir, "test.db")
-	os.Setenv("SQLALCHEMY_DATABASE_URI", "sqlite:///"+dbPath)
+	os.Setenv("DATABASE_PATH", ""+dbPath)
 	os.Setenv("SECRET_KEY", "test_secret_key_12345678901234567890123456789012")
 
 	defer func() {
-		os.Unsetenv("SQLALCHEMY_DATABASE_URI")
+		os.Unsetenv("DATABASE_PATH")
 		os.Unsetenv("SECRET_KEY")
 	}()
 
@@ -211,11 +211,11 @@ func TestAutoMigrate_CreatesTables(t *testing.T) {
 	
 	tempDir := t.TempDir()
 	dbPath := filepath.Join(tempDir, "test.db")
-	os.Setenv("SQLALCHEMY_DATABASE_URI", "sqlite:///"+dbPath)
+	os.Setenv("DATABASE_PATH", ""+dbPath)
 	os.Setenv("SECRET_KEY", "test_secret_key_12345678901234567890123456789012")
 
 	defer func() {
-		os.Unsetenv("SQLALCHEMY_DATABASE_URI")
+		os.Unsetenv("DATABASE_PATH")
 		os.Unsetenv("SECRET_KEY")
 	}()
 
@@ -244,11 +244,11 @@ func TestAutoMigrate_UserModel(t *testing.T) {
 	
 	tempDir := t.TempDir()
 	dbPath := filepath.Join(tempDir, "test.db")
-	os.Setenv("SQLALCHEMY_DATABASE_URI", "sqlite:///"+dbPath)
+	os.Setenv("DATABASE_PATH", ""+dbPath)
 	os.Setenv("SECRET_KEY", "test_secret_key_12345678901234567890123456789012")
 
 	defer func() {
-		os.Unsetenv("SQLALCHEMY_DATABASE_URI")
+		os.Unsetenv("DATABASE_PATH")
 		os.Unsetenv("SECRET_KEY")
 	}()
 
@@ -296,12 +296,12 @@ func TestCreateAdminUser_GeneratesRandomPassword(t *testing.T) {
 	
 	tempDir := t.TempDir()
 	dbPath := filepath.Join(tempDir, "test.db")
-	os.Setenv("SQLALCHEMY_DATABASE_URI", "sqlite:///"+dbPath)
+	os.Setenv("DATABASE_PATH", ""+dbPath)
 	os.Unsetenv("ADMIN_PASSWORD")
 	os.Setenv("SECRET_KEY", "test_secret_key_12345678901234567890123456789012")
 
 	defer func() {
-		os.Unsetenv("SQLALCHEMY_DATABASE_URI")
+		os.Unsetenv("DATABASE_PATH")
 		os.Unsetenv("SECRET_KEY")
 	}()
 
@@ -333,12 +333,12 @@ func TestCreateAdminUser_DoesNotOverwrite(t *testing.T) {
 	
 	tempDir := t.TempDir()
 	dbPath := filepath.Join(tempDir, "test.db")
-	os.Setenv("SQLALCHEMY_DATABASE_URI", "sqlite:///"+dbPath)
+	os.Setenv("DATABASE_PATH", ""+dbPath)
 	os.Setenv("ADMIN_PASSWORD", "FirstPassword123!")
 	os.Setenv("SECRET_KEY", "test_secret_key_12345678901234567890123456789012")
 
 	defer func() {
-		os.Unsetenv("SQLALCHEMY_DATABASE_URI")
+		os.Unsetenv("DATABASE_PATH")
 		os.Unsetenv("ADMIN_PASSWORD")
 		os.Unsetenv("SECRET_KEY")
 	}()
@@ -391,11 +391,11 @@ func TestGetDB_ReturnsDB(t *testing.T) {
 	
 	tempDir := t.TempDir()
 	dbPath := filepath.Join(tempDir, "test.db")
-	os.Setenv("SQLALCHEMY_DATABASE_URI", "sqlite:///"+dbPath)
+	os.Setenv("DATABASE_PATH", ""+dbPath)
 	os.Setenv("SECRET_KEY", "test_secret_key_12345678901234567890123456789012")
 
 	defer func() {
-		os.Unsetenv("SQLALCHEMY_DATABASE_URI")
+		os.Unsetenv("DATABASE_PATH")
 		os.Unsetenv("SECRET_KEY")
 	}()
 

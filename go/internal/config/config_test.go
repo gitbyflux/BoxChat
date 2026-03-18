@@ -49,7 +49,7 @@ func TestGenerateSecretKey(t *testing.T) {
 
 func TestLoad_Defaults(t *testing.T) {
 	// Clear environment variables
-	os.Unsetenv("SQLALCHEMY_DATABASE_URI")
+	os.Unsetenv("DATABASE_PATH")
 	os.Unsetenv("SECRET_KEY")
 	os.Unsetenv("GIPHY_API_KEY")
 	os.Unsetenv("SERVER_HOST")
@@ -66,23 +66,23 @@ func TestLoad_Defaults(t *testing.T) {
 	}
 
 	// Verify defaults
-	if cfg.SQLAlchemyDatabaseURI != "sqlite:///thecomboxmsgr.db" {
-		t.Errorf("Default SQLAlchemyDatabaseURI = %s, want sqlite:///thecomboxmsgr.db", cfg.SQLAlchemyDatabaseURI)
+	if cfg.Database.Path != "instance/boxchat.db" {
+		t.Errorf("Default Database.Path = %s, want instance/boxchat.db", cfg.Database.Path)
 	}
-	if cfg.ServerHost != "127.0.0.1" {
-		t.Errorf("Default ServerHost = %s, want 127.0.0.1", cfg.ServerHost)
+	if cfg.Server.Host != "127.0.0.1" {
+		t.Errorf("Default Server.Host = %s, want 127.0.0.1", cfg.Server.Host)
 	}
-	if cfg.ServerPort != "5000" {
-		t.Errorf("Default ServerPort = %s, want 5000", cfg.ServerPort)
+	if cfg.Server.Port != 5000 {
+		t.Errorf("Default Server.Port = %d, want 5000", cfg.Server.Port)
 	}
-	if cfg.MaxContentLength != 50*1024*1024 {
-		t.Errorf("Default MaxContentLength = %d, want %d", cfg.MaxContentLength, 50*1024*1024)
+	if cfg.Upload.MaxSize != 50*1024*1024 {
+		t.Errorf("Default Upload.MaxSize = %d, want %d", cfg.Upload.MaxSize, 50*1024*1024)
 	}
-	if cfg.PermanentSessionLifetimeDays != 30 {
-		t.Errorf("Default PermanentSessionLifetimeDays = %d, want 30", cfg.PermanentSessionLifetimeDays)
+	if cfg.Session.LifetimeDays != 30 {
+		t.Errorf("Default Session.LifetimeDays = %d, want 30", cfg.Session.LifetimeDays)
 	}
-	if cfg.RememberCookieDurationDays != 30 {
-		t.Errorf("Default RememberCookieDurationDays = %d, want 30", cfg.RememberCookieDurationDays)
+	if cfg.RememberCookie.DurationDays != 30 {
+		t.Errorf("Default RememberCookie.DurationDays = %d, want 30", cfg.RememberCookie.DurationDays)
 	}
 
 	// Verify computed values
@@ -99,7 +99,7 @@ func TestLoad_Defaults(t *testing.T) {
 
 func TestLoad_EnvironmentVariables(t *testing.T) {
 	// Set environment variables
-	os.Setenv("SQLALCHEMY_DATABASE_URI", "sqlite:///test.db")
+	os.Setenv("DATABASE_PATH", "instance/test.db")
 	os.Setenv("SECRET_KEY", "test_secret_key_12345678901234567890123456789012")
 	os.Setenv("GIPHY_API_KEY", "test_giphy_key")
 	os.Setenv("SERVER_HOST", "0.0.0.0")
@@ -107,7 +107,7 @@ func TestLoad_EnvironmentVariables(t *testing.T) {
 	os.Setenv("MAX_CONTENT_LENGTH", "104857600") // 100MB
 
 	defer func() {
-		os.Unsetenv("SQLALCHEMY_DATABASE_URI")
+		os.Unsetenv("DATABASE_PATH")
 		os.Unsetenv("SECRET_KEY")
 		os.Unsetenv("GIPHY_API_KEY")
 		os.Unsetenv("SERVER_HOST")
@@ -120,29 +120,29 @@ func TestLoad_EnvironmentVariables(t *testing.T) {
 		t.Fatalf("Load() error = %v", err)
 	}
 
-	if cfg.SQLAlchemyDatabaseURI != "sqlite:///test.db" {
-		t.Errorf("SQLAlchemyDatabaseURI = %s, want sqlite:///test.db", cfg.SQLAlchemyDatabaseURI)
+	if cfg.Database.Path != "instance/test.db" {
+		t.Errorf("Database.Path = %s, want instance/test.db", cfg.Database.Path)
 	}
-	if cfg.SecretKey != "test_secret_key_12345678901234567890123456789012" {
-		t.Errorf("SecretKey = %s, want test_secret_key_...", cfg.SecretKey)
+	if cfg.Security.SecretKey != "test_secret_key_12345678901234567890123456789012" {
+		t.Errorf("Security.SecretKey = %s, want test_secret_key_...", cfg.Security.SecretKey)
 	}
-	if cfg.GiphyAPIKey != "test_giphy_key" {
-		t.Errorf("GiphyAPIKey = %s, want test_giphy_key", cfg.GiphyAPIKey)
+	if cfg.Giphy.APIKey != "test_giphy_key" {
+		t.Errorf("Giphy.APIKey = %s, want test_giphy_key", cfg.Giphy.APIKey)
 	}
-	if cfg.ServerHost != "0.0.0.0" {
-		t.Errorf("ServerHost = %s, want 0.0.0.0", cfg.ServerHost)
+	if cfg.Server.Host != "0.0.0.0" {
+		t.Errorf("Server.Host = %s, want 0.0.0.0", cfg.Server.Host)
 	}
-	if cfg.ServerPort != "8080" {
-		t.Errorf("ServerPort = %s, want 8080", cfg.ServerPort)
+	if cfg.Server.Port != 8080 {
+		t.Errorf("Server.Port = %d, want 8080", cfg.Server.Port)
 	}
-	if cfg.MaxContentLength != 104857600 {
-		t.Errorf("MaxContentLength = %d, want 104857600", cfg.MaxContentLength)
+	if cfg.Upload.MaxSize != 104857600 {
+		t.Errorf("Upload.MaxSize = %d, want 104857600", cfg.Upload.MaxSize)
 	}
 }
 
 func TestLoad_CustomDatabasePath(t *testing.T) {
-	os.Setenv("SQLALCHEMY_DATABASE_URI", "sqlite:///custom/path/mydb.db")
-	defer os.Unsetenv("SQLALCHEMY_DATABASE_URI")
+	os.Setenv("DATABASE_PATH", "custom/path/mydb.db")
+	defer os.Unsetenv("DATABASE_PATH")
 
 	cfg, err := Load()
 	if err != nil {
@@ -167,11 +167,11 @@ func TestLoad_GeneratesSecretKey(t *testing.T) {
 	}
 
 	// Should generate a secret key if not provided
-	if cfg.SecretKey == "" {
-		t.Error("Load() should generate SecretKey if not provided")
+	if cfg.Security.SecretKey == "" {
+		t.Error("Load() should generate Security.SecretKey if not provided")
 	}
-	if len(cfg.SecretKey) != 64 {
-		t.Errorf("Generated SecretKey length = %d, want 64", len(cfg.SecretKey))
+	if len(cfg.Security.SecretKey) != 64 {
+		t.Errorf("Generated Security.SecretKey length = %d, want 64", len(cfg.Security.SecretKey))
 	}
 }
 
@@ -195,56 +195,30 @@ func TestLoad_GlobalConfig(t *testing.T) {
 
 func TestConfigSessionDefaults(t *testing.T) {
 	os.Unsetenv("SECRET_KEY")
-	
+
 	cfg, err := Load()
 	if err != nil {
 		t.Fatalf("Load() error = %v", err)
 	}
 
 	// Verify session defaults from loaded config
-	if cfg.SessionCookieHTTPOnly != true {
-		t.Error("SessionCookieHTTPOnly should be true")
+	if cfg.Session.HTTPOnly != true {
+		t.Error("Session.HTTPOnly should be true")
 	}
-	if cfg.SessionCookieSameSite != "Lax" {
-		t.Errorf("SessionCookieSameSite = %s, want Lax", cfg.SessionCookieSameSite)
+	if cfg.Session.SameSite != "Lax" {
+		t.Errorf("Session.SameSite = %s, want Lax", cfg.Session.SameSite)
 	}
-	if cfg.SessionCookieSecure != false {
-		t.Error("SessionCookieSecure should be false")
+	if cfg.Session.Secure != false {
+		t.Error("Session.Secure should be false")
 	}
-	if cfg.RememberCookieHTTPOnly != true {
-		t.Error("RememberCookieHTTPOnly should be true")
-	}
-}
-
-func TestConfigUploadSubdirs(t *testing.T) {
-	os.Unsetenv("SECRET_KEY")
-	
-	cfg, err := Load()
-	if err != nil {
-		t.Fatalf("Load() error = %v", err)
-	}
-
-	expectedSubdirs := map[string]string{
-		"avatars":       "avatars",
-		"room_avatars":  "room_avatars",
-		"channel_icons": "channel_icons",
-		"files":         "files",
-		"music":         "music",
-		"videos":        "videos",
-	}
-
-	for key, expected := range expectedSubdirs {
-		if actual, ok := cfg.UploadSubdirs[key]; !ok {
-			t.Errorf("UploadSubdirs missing key: %s", key)
-		} else if actual != expected {
-			t.Errorf("UploadSubdirs[%s] = %s, want %s", key, actual, expected)
-		}
+	if cfg.RememberCookie.HTTPOnly != true {
+		t.Error("RememberCookie.HTTPOnly should be true")
 	}
 }
 
 func TestConfigAllowedExtensions(t *testing.T) {
 	os.Unsetenv("SECRET_KEY")
-	
+
 	cfg, err := Load()
 	if err != nil {
 		t.Fatalf("Load() error = %v", err)
@@ -272,7 +246,7 @@ func TestConfigAllowedExtensions(t *testing.T) {
 
 func TestConfigImageExtensions(t *testing.T) {
 	os.Unsetenv("SECRET_KEY")
-	
+
 	cfg, err := Load()
 	if err != nil {
 		t.Fatalf("Load() error = %v", err)
@@ -295,7 +269,7 @@ func TestConfigImageExtensions(t *testing.T) {
 
 func TestConfigMusicExtensions(t *testing.T) {
 	os.Unsetenv("SECRET_KEY")
-	
+
 	cfg, err := Load()
 	if err != nil {
 		t.Fatalf("Load() error = %v", err)
@@ -318,7 +292,7 @@ func TestConfigMusicExtensions(t *testing.T) {
 
 func TestConfigVideoExtensions(t *testing.T) {
 	os.Unsetenv("SECRET_KEY")
-	
+
 	cfg, err := Load()
 	if err != nil {
 		t.Fatalf("Load() error = %v", err)
@@ -343,8 +317,8 @@ func TestConfigVideoExtensions(t *testing.T) {
 // Edge Cases Tests
 // ============================================================================
 
-func TestLoad_MaxContentLengthWarning(t *testing.T) {
-	// This test verifies that high MAX_CONTENT_LENGTH is handled
+func TestLoad_MaxUploadSizeWarning(t *testing.T) {
+	// This test verifies that high upload.max_size is handled
 	// The warning is printed to stdout, so we just verify it doesn't crash
 	os.Setenv("MAX_CONTENT_LENGTH", "2147483648") // 2GB
 	defer os.Unsetenv("MAX_CONTENT_LENGTH")
@@ -354,17 +328,17 @@ func TestLoad_MaxContentLengthWarning(t *testing.T) {
 		t.Fatalf("Load() should not error with high MAX_CONTENT_LENGTH: %v", err)
 	}
 
-	if cfg.MaxContentLength != 2147483648 {
-		t.Errorf("MaxContentLength = %d, want 2147483648", cfg.MaxContentLength)
+	if cfg.Upload.MaxSize != 2147483648 {
+		t.Errorf("Upload.MaxSize = %d, want 2147483648", cfg.Upload.MaxSize)
 	}
 }
 
 func TestLoad_EmptyConfigFile(t *testing.T) {
 	// Create a temporary empty config file
 	tempDir := t.TempDir()
-	configPath := filepath.Join(tempDir, "config.json")
-	
-	// Write empty JSON
+	configPath := filepath.Join(tempDir, "config.yaml")
+
+	// Write empty YAML
 	if err := os.WriteFile(configPath, []byte("{}"), 0644); err != nil {
 		t.Fatalf("Failed to create temp config file: %v", err)
 	}
@@ -383,18 +357,18 @@ func TestLoad_EmptyConfigFile(t *testing.T) {
 	}
 
 	// Should use defaults
-	if cfg.SQLAlchemyDatabaseURI != "sqlite:///thecomboxmsgr.db" {
-		t.Errorf("Empty config should use defaults, got %s", cfg.SQLAlchemyDatabaseURI)
+	if cfg.Database.Path != "instance/boxchat.db" {
+		t.Errorf("Empty config should use defaults, got %s", cfg.Database.Path)
 	}
 }
 
-func TestLoad_InvalidJSONConfig(t *testing.T) {
+func TestLoad_InvalidYAMLConfig(t *testing.T) {
 	// Create a temporary invalid config file
 	tempDir := t.TempDir()
-	configPath := filepath.Join(tempDir, "config.json")
-	
-	// Write invalid JSON
-	if err := os.WriteFile(configPath, []byte("{invalid json}"), 0644); err != nil {
+	configPath := filepath.Join(tempDir, "config.yaml")
+
+	// Write invalid YAML
+	if err := os.WriteFile(configPath, []byte("{invalid yaml"), 0644); err != nil {
 		t.Fatalf("Failed to create temp config file: %v", err)
 	}
 
@@ -406,13 +380,85 @@ func TestLoad_InvalidJSONConfig(t *testing.T) {
 		os.Unsetenv("SECRET_KEY")
 	}()
 
-	// Should not crash, should use defaults
-	cfg, err := Load()
-	if err != nil {
-		t.Fatalf("Load() should not error with invalid JSON = %v", err)
+	// Should return error for invalid YAML
+	_, err := Load()
+	if err == nil {
+		t.Fatal("Load() should return error with invalid YAML")
+	}
+	if !contains(err.Error(), "failed to parse config.yaml") {
+		t.Errorf("Error should mention parse failure, got: %v", err)
+	}
+}
+
+func contains(s, substr string) bool {
+	return len(s) >= len(substr) && (s == substr || len(s) > len(substr) && findSubstring(s, substr))
+}
+
+func findSubstring(s, substr string) bool {
+	for i := 0; i <= len(s)-len(substr); i++ {
+		if s[i:i+len(substr)] == substr {
+			return true
+		}
+	}
+	return false
+}
+
+func TestLoad_ValidYAMLConfig(t *testing.T) {
+	// Create a temporary valid YAML config file
+	tempDir := t.TempDir()
+	configPath := filepath.Join(tempDir, "config.yaml")
+
+	yamlConfig := `
+database:
+  path: instance/testdb.db
+server:
+  host: 192.168.1.1
+  port: 8080
+security:
+  secret_key: test_key_12345678901234567890123456789012
+upload:
+  folder: custom_uploads
+  max_size: 104857600
+session:
+  lifetime_days: 60
+`
+
+	if err := os.WriteFile(configPath, []byte(yamlConfig), 0644); err != nil {
+		t.Fatalf("Failed to create temp config file: %v", err)
 	}
 
-	if cfg == nil {
-		t.Error("Load() should return config even with invalid JSON")
+	// Change to temp directory
+	origDir, _ := os.Getwd()
+	os.Chdir(tempDir)
+	defer func() {
+		os.Chdir(origDir)
+		os.Unsetenv("SECRET_KEY")
+	}()
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error with valid YAML = %v", err)
+	}
+
+	if cfg.Database.Path != "instance/testdb.db" {
+		t.Errorf("Database.Path = %s, want instance/testdb.db", cfg.Database.Path)
+	}
+	if cfg.Server.Host != "192.168.1.1" {
+		t.Errorf("Server.Host = %s, want 192.168.1.1", cfg.Server.Host)
+	}
+	if cfg.Server.Port != 8080 {
+		t.Errorf("Server.Port = %d, want 8080", cfg.Server.Port)
+	}
+	if cfg.Security.SecretKey != "test_key_12345678901234567890123456789012" {
+		t.Errorf("Security.SecretKey = %s, want test_key_...", cfg.Security.SecretKey)
+	}
+	if cfg.Upload.Folder != "custom_uploads" {
+		t.Errorf("Upload.Folder = %s, want custom_uploads", cfg.Upload.Folder)
+	}
+	if cfg.Upload.MaxSize != 104857600 {
+		t.Errorf("Upload.MaxSize = %d, want 104857600", cfg.Upload.MaxSize)
+	}
+	if cfg.Session.LifetimeDays != 60 {
+		t.Errorf("Session.LifetimeDays = %d, want 60", cfg.Session.LifetimeDays)
 	}
 }

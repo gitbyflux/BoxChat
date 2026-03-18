@@ -1,11 +1,9 @@
 package services
 
 import (
-	"boxchat/internal/config"
 	"boxchat/internal/database"
 	"boxchat/internal/models"
-	"os"
-	"path/filepath"
+	"boxchat/internal/testutil"
 	"testing"
 
 	"golang.org/x/crypto/bcrypt"
@@ -16,25 +14,9 @@ import (
 // ============================================================================
 
 func setupRoleServiceTestDB(t *testing.T) func() {
-	// Reset database state for test
-	database.ResetForTesting()
-	
-	tempDir := t.TempDir()
-	dbPath := filepath.Join(tempDir, "test.db")
-	os.Setenv("SQLALCHEMY_DATABASE_URI", "sqlite:///"+dbPath)
-
-	cfg, err := config.Load()
-	if err != nil {
-		t.Fatalf("Failed to load config: %v", err)
-	}
-
-	if err := database.Init(cfg); err != nil {
-		t.Fatalf("Failed to initialize database: %v", err)
-	}
-
-	return func() {
-		os.Unsetenv("SQLALCHEMY_DATABASE_URI")
-	}
+	cfg, cleanup := testutil.SetupTestDB(t)
+	_ = cfg // Use config if needed
+	return cleanup
 }
 
 func createRoleServiceUser(t *testing.T, username string, isSuperuser bool) *models.User {

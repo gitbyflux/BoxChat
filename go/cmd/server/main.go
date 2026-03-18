@@ -28,7 +28,7 @@ func main() {
 	fmt.Println("[CONFIG] ✓ Configuration loaded successfully")
 
 	// Initialize upload folders
-	initUploadFolders(cfg.UploadDir, cfg.UploadSubdirs)
+	initUploadFolders(cfg.UploadDir)
 
 	// Initialize database
 	if err := database.Init(cfg); err != nil {
@@ -116,19 +116,20 @@ func main() {
 	}
 }
 
-func initUploadFolders(uploadDir string, subdirs map[string]string) {
+func initUploadFolders(uploadDir string) {
 	// Create main upload directory
 	if err := os.MkdirAll(uploadDir, 0755); err != nil {
 		log.Printf("[UPLOAD] Failed to create upload dir: %v", err)
 	}
-	
-	// Create subdirectories
+
+	// Create subdirectories (hardcoded for security)
+	subdirs := []string{"avatars", "room_avatars", "channel_icons", "files", "music", "videos"}
 	for _, subdir := range subdirs {
 		path := filepath.Join(uploadDir, subdir)
 		if err := os.MkdirAll(path, 0755); err != nil {
 			log.Printf("[UPLOAD] Failed to create subdir %s: %v", subdir, err)
 		}
 	}
-	
+
 	fmt.Println("[UPLOAD] Folders initialized")
 }

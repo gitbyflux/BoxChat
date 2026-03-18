@@ -1,13 +1,12 @@
 package http
 
 import (
+	"boxchat/internal/testutil"
 	"bytes"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -27,21 +26,7 @@ import (
 func setupAPITestDB(t *testing.T) (*config.Config, *gin.Engine, func()) {
 	t.Helper()
 
-	database.ResetForTesting()
-
-	tempDir := t.TempDir()
-	dbPath := filepath.Join(tempDir, "test.db")
-	os.Setenv("SQLALCHEMY_DATABASE_URI", "sqlite:///"+dbPath)
-	os.Setenv("SECRET_KEY", "test_secret_key_12345678901234567890123456789012")
-
-	cfg, err := config.Load()
-	if err != nil {
-		t.Fatalf("Failed to load config: %v", err)
-	}
-
-	if err := database.Init(cfg); err != nil {
-		t.Fatalf("Failed to initialize database: %v", err)
-	}
+	cfg, dbCleanup := testutil.SetupTestDB(t)
 
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
@@ -52,12 +37,7 @@ func setupAPITestDB(t *testing.T) (*config.Config, *gin.Engine, func()) {
 	authHandler.RegisterRoutes(router)
 	apiHandler.RegisterRoutes(router)
 
-	cleanup := func() {
-		os.Unsetenv("SQLALCHEMY_DATABASE_URI")
-		os.Unsetenv("SECRET_KEY")
-	}
-
-	return cfg, router, cleanup
+	return cfg, router, dbCleanup
 }
 
 func setupAPIHandlerWithRoutes(t *testing.T) (*config.Config, *gin.Engine, *APIHandler, func()) {

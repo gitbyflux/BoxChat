@@ -1,12 +1,11 @@
 package http
 
 import (
+	"boxchat/internal/testutil"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
-	"os"
-	"path/filepath"
 	"testing"
 
 	"boxchat/internal/config"
@@ -23,26 +22,11 @@ import (
 func setupRoomsExtraTestDB(t *testing.T) (*config.Config, *gin.Engine, func()) {
 	t.Helper()
 
-	database.ResetForTesting()
-
-	tempDir := t.TempDir()
-	dbPath := filepath.Join(tempDir, "test.db")
-	os.Setenv("SQLALCHEMY_DATABASE_URI", "sqlite:///"+dbPath)
-	os.Setenv("SECRET_KEY", "test_secret_key_12345678901234567890123456789012")
-
-	cfg, err := config.Load()
-	if err != nil {
-		t.Fatalf("Failed to load config: %v", err)
-	}
-
-	if err := database.Init(cfg); err != nil {
-		t.Fatalf("Failed to initialize database: %v", err)
-	}
+	cfg, dbCleanup := testutil.SetupTestDB(t)
 
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
 
-	cfg, _ = config.Load()
 	authHandler := NewAuthHandler(cfg)
 	apiHandler := NewAPIHandler(cfg)
 
@@ -50,12 +34,7 @@ func setupRoomsExtraTestDB(t *testing.T) (*config.Config, *gin.Engine, func()) {
 	apiHandler.RegisterRoutes(router)
 	apiHandler.RegisterRoomsExtraRoutes(router)
 
-	cleanup := func() {
-		os.Unsetenv("SQLALCHEMY_DATABASE_URI")
-		os.Unsetenv("SECRET_KEY")
-	}
-
-	return cfg, router, cleanup
+	return cfg, router, dbCleanup
 }
 
 // ============================================================================

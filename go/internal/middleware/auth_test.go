@@ -1,14 +1,13 @@
 package middleware
 
 import (
-	"boxchat/internal/config"
 	"boxchat/internal/database"
 	"boxchat/internal/models"
+	"boxchat/internal/testutil"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
-	"path/filepath"
 	"testing"
 
 	"github.com/gin-gonic/gin"
@@ -17,28 +16,9 @@ import (
 
 // setupMiddlewareTestDB initializes a test database for middleware tests
 func setupMiddlewareTestDB(t *testing.T) func() {
-	// Reset database state for test
-	database.ResetForTesting()
-	
-	tempDir := t.TempDir()
-	dbPath := filepath.Join(tempDir, "test.db")
-	os.Setenv("SQLALCHEMY_DATABASE_URI", "sqlite:///"+dbPath)
-	os.Setenv("SECRET_KEY", "test-secret-key-for-middleware-tests")
-
-	cfg, err := config.Load()
-	if err != nil {
-		t.Fatalf("Failed to load config: %v", err)
-	}
-
-	if err := database.Init(cfg); err != nil {
-		t.Fatalf("Failed to initialize database: %v", err)
-	}
-
-	gin.SetMode(gin.TestMode)
-	return func() {
-		os.Unsetenv("SQLALCHEMY_DATABASE_URI")
-		os.Unsetenv("SECRET_KEY")
-	}
+	cfg, cleanup := testutil.SetupTestDB(t)
+	_ = cfg // Use config if needed
+	return cleanup
 }
 
 // hashPassword creates a bcrypt hash for testing

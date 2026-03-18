@@ -1,48 +1,42 @@
 package services
 
 import (
-	"boxchat/internal/config"
 	"boxchat/internal/database"
 	"boxchat/internal/models"
-	"os"
-	"path/filepath"
+	"boxchat/internal/testutil"
 	"testing"
 	"time"
+
+	"golang.org/x/crypto/bcrypt"
 )
 
 // setupModerationTestDB initializes a test database for moderation tests
 func setupModerationTestDB(t *testing.T) func() {
-	// Reset database state for test
-	database.ResetForTesting()
-	
-	tempDir := t.TempDir()
-	dbPath := filepath.Join(tempDir, "test.db")
-	os.Setenv("SQLALCHEMY_DATABASE_URI", "sqlite:///"+dbPath)
+	cfg, cleanup := testutil.SetupTestDB(t)
+	_ = cfg // Use config if needed
+	return cleanup
+}
 
-	cfg, err := config.Load()
+// hashPassword creates a bcrypt hash for testing
+func hashPassword(t *testing.T, password string) string {
+	t.Helper()
+	hashedBytes, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
 	if err != nil {
-		t.Fatalf("Failed to load config: %v", err)
+		t.Fatalf("Failed to hash password: %v", err)
 	}
-
-	if err := database.Init(cfg); err != nil {
-		t.Fatalf("Failed to initialize database: %v", err)
-	}
-
-	return func() {
-		os.Unsetenv("SQLALCHEMY_DATABASE_URI")
-	}
+	return string(hashedBytes)
 }
 
 // createTestUser creates a test user with the given username
 func createTestUser(t *testing.T, username string, isSuperuser bool) *models.User {
 	t.Helper()
-	
+
 	// Check if user already exists
 	var existing models.User
 	if err := database.DB.Where("username = ?", username).First(&existing).Error; err == nil {
 		return &existing
 	}
-	
+
 	hashedPassword := hashPassword(t, "password123")
 	user := models.User{
 		Username:       username,

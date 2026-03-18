@@ -1,35 +1,16 @@
 package services
 
 import (
-	"boxchat/internal/config"
 	"boxchat/internal/database"
 	"boxchat/internal/models"
-	"os"
-	"path/filepath"
+	"boxchat/internal/testutil"
 	"testing"
 )
 
 // setupMentionsTestDB initializes a test database for mentions tests
 func setupMentionsTestDB(t *testing.T) func() {
-	// Reset database state for test
-	database.ResetForTesting()
-	
-	tempDir := t.TempDir()
-	dbPath := filepath.Join(tempDir, "test.db")
-	os.Setenv("SQLALCHEMY_DATABASE_URI", "sqlite:///"+dbPath)
-
-	cfg, err := config.Load()
-	if err != nil {
-		t.Fatalf("Failed to load config: %v", err)
-	}
-
-	if err := database.Init(cfg); err != nil {
-		t.Fatalf("Failed to initialize database: %v", err)
-	}
-
-	return func() {
-		os.Unsetenv("SQLALCHEMY_DATABASE_URI")
-	}
+	_, cleanup := testutil.SetupTestDB(t)
+	return cleanup
 }
 
 // ============================================================================

@@ -63,7 +63,7 @@ func (h *AuthHandler) LoginAPI(c *gin.Context) {
 	
 	// Set cookies
 	h.setAuthCookies(c, user, req.RememberMe)
-	
+
 	// Return success response
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
@@ -74,7 +74,7 @@ func (h *AuthHandler) LoginAPI(c *gin.Context) {
 		},
 		"session": gin.H{
 			"remember":    req.RememberMe,
-			"cookie_name": h.cfg.SessionCookieName,
+			"cookie_name": h.cfg.Session.CookieName,
 		},
 	})
 }
@@ -106,7 +106,7 @@ func (h *AuthHandler) RegisterAPI(c *gin.Context) {
 	
 	// Set cookies
 	h.setAuthCookies(c, user, req.RememberMe)
-	
+
 	c.JSON(http.StatusCreated, gin.H{
 		"success": true,
 		"redirect": "/",
@@ -116,7 +116,7 @@ func (h *AuthHandler) RegisterAPI(c *gin.Context) {
 		},
 		"session": gin.H{
 			"remember":    req.RememberMe,
-			"cookie_name": h.cfg.SessionCookieName,
+			"cookie_name": h.cfg.Session.CookieName,
 		},
 	})
 }
@@ -130,7 +130,7 @@ func (h *AuthHandler) GetSession(c *gin.Context) {
 	
 	authMode, _ := c.Cookie("boxchat_auth_mode")
 	uidCookie, _ := c.Cookie("boxchat_uid")
-	
+
 	c.JSON(http.StatusOK, gin.H{
 		"authenticated": true,
 		"user": gin.H{
@@ -140,8 +140,8 @@ func (h *AuthHandler) GetSession(c *gin.Context) {
 			"is_superuser": user.IsSuperuser,
 		},
 		"session": gin.H{
-			"cookie_name":        h.cfg.SessionCookieName,
-			"remember_cookie_name": h.cfg.RememberCookieName,
+			"cookie_name":        h.cfg.Session.CookieName,
+			"remember_cookie_name": h.cfg.RememberCookie.Name,
 			"auth_mode":          authMode,
 			"uid_cookie":         uidCookie,
 		},
@@ -172,7 +172,7 @@ func (h *AuthHandler) setAuthCookies(c *gin.Context, user *models.User, remember
 		maxAge = 0
 	}
 
-	secure := h.cfg.SessionCookieSecure
+	secure := h.cfg.Session.Secure
 	httpOnly := true
 
 	// Set cookies with SameSite=Lax for browser compatibility

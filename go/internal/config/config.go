@@ -3,48 +3,81 @@ package config
 import (
 	"crypto/rand"
 	"encoding/hex"
-	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
 	"time"
+
+	"gopkg.in/yaml.v3"
 )
 
 type Config struct {
-	SQLAlchemyDatabaseURI        string        `json:"SQLALCHEMY_DATABASE_URI"`
-	SQLAlchemyTrackModifications bool          `json:"SQLALCHEMY_TRACK_MODIFICATIONS"`
-	SecretKey                    string        `json:"SECRET_KEY"`
-	GiphyAPIKey                  string        `json:"GIPHY_API_KEY"`
-	UploadFolder                 string        `json:"UPLOAD_FOLDER"`
-	MaxContentLength             int64         `json:"MAX_CONTENT_LENGTH"`
-	AllowedExtensions            []string      `json:"ALLOWED_EXTENSIONS"`
-	ImageExtensions              []string      `json:"IMAGE_EXTENSIONS"`
-	MusicExtensions              []string      `json:"MUSIC_EXTENSIONS"`
-	VideoExtensions              []string      `json:"VIDEO_EXTENSIONS"`
-	UploadSubdirs                map[string]string `json:"UPLOAD_SUBDIRS"`
-	
-	// Session settings
-	PermanentSessionLifetimeDays int `json:"PERMANENT_SESSION_LIFETIME_DAYS"`
-	RememberCookieDurationDays   int `json:"REMEMBER_COOKIE_DURATION_DAYS"`
-	SessionCookieName            string `json:"SESSION_COOKIE_NAME"`
-	SessionCookieHTTPOnly        bool   `json:"SESSION_COOKIE_HTTPONLY"`
-	SessionCookieSameSite        string `json:"SESSION_COOKIE_SAMESITE"`
-	SessionCookieSecure          bool   `json:"SESSION_COOKIE_SECURE"`
-	RememberCookieName           string `json:"REMEMBER_COOKIE_NAME"`
-	RememberCookieHTTPOnly       bool   `json:"REMEMBER_COOKIE_HTTPONLY"`
-	RememberCookieSameSite       string `json:"REMEMBER_COOKIE_SAMESITE"`
-	RememberCookieSecure         bool   `json:"REMEMBER_COOKIE_SECURE"`
-	
-	// Server settings
-	ServerHost string `json:"-"`
-	ServerPort string `json:"-"`
-	
+	// Database
+	Database struct {
+		Path string `yaml:"path"`
+	} `yaml:"database"`
+
+	// Server
+	Server struct {
+		Host string `yaml:"host"`
+		Port int    `yaml:"port"`
+	} `yaml:"server"`
+
+	// Security
+	Security struct {
+		SecretKey string `yaml:"secret_key"`
+	} `yaml:"security"`
+
+	// Upload
+	Upload struct {
+		Folder  string            `yaml:"folder"`
+		MaxSize int64             `yaml:"max_size"`
+		Subdirs map[string]string `yaml:"subdirs"`
+		AllowedExtensions struct {
+			Images []string `yaml:"images"`
+			Music  []string `yaml:"music"`
+			Video  []string `yaml:"video"`
+			Files  []string `yaml:"files"`
+		} `yaml:"allowed_extensions"`
+	} `yaml:"upload"`
+
+	// Session
+	Session struct {
+		LifetimeDays int    `yaml:"lifetime_days"`
+		CookieName   string `yaml:"cookie_name"`
+		HTTPOnly     bool   `yaml:"http_only"`
+		SameSite     string `yaml:"same_site"`
+		Secure       bool   `yaml:"secure"`
+	} `yaml:"session"`
+
+	// Remember cookie
+	RememberCookie struct {
+		DurationDays int    `yaml:"duration_days"`
+		Name         string `yaml:"name"`
+		HTTPOnly     bool   `yaml:"http_only"`
+		SameSite     string `yaml:"same_site"`
+		Secure       bool   `yaml:"secure"`
+	} `yaml:"remember_cookie"`
+
+	// Giphy
+	Giphy struct {
+		APIKey string `yaml:"api_key"`
+	} `yaml:"giphy"`
+
 	// Computed
 	PermanentSessionLifetime time.Duration
 	RememberCookieDuration time.Duration
 	RootDir                  string
 	UploadDir                string
 	DBPath                   string
+	ServerHost               string
+	ServerPort               string
+	SecretKey                string
+	GiphyAPIKey              string
+	AllowedExtensions        []string
+	ImageExtensions          []string
+	MusicExtensions          []string
+	VideoExtensions          []string
 }
 
 var Global *Config
@@ -53,124 +86,122 @@ var Global *Config
 func generateSecretKey() string {
 	bytes := make([]byte, 32)
 	if _, err := rand.Read(bytes); err != nil {
-		// Random generation failure is extremely rare and indicates a serious system issue
-		// Panicking is safer than using a predictable fallback key
 		panic(fmt.Sprintf("[CONFIG] CRITICAL: Failed to generate secure random key: %v. Please check system entropy.", err))
 	}
 	return hex.EncodeToString(bytes)
 }
 
 func Load() (*Config, error) {
-	// Get root directory - use current working directory
-	// This assumes the server is run from the project root
+	// Get root directory
 	rootDir, err := os.Getwd()
 	if err != nil {
-		// Fallback: derive from executable path
 		execPath, _ := os.Executable()
 		goDir := filepath.Dir(execPath)
 		rootDir = filepath.Dir(goDir)
 	}
-
-	// Load config.json from root
-	configPath := filepath.Join(rootDir, "config.json")
 
 	cfg := &Config{
 		RootDir: rootDir,
 	}
 
 	// Defaults
-	cfg.SQLAlchemyDatabaseURI = "sqlite:///thecomboxmsgr.db"
-	cfg.SQLAlchemyTrackModifications = false
-	cfg.SecretKey = ""  // Will be generated if not provided
-	cfg.GiphyAPIKey = ""
-	cfg.UploadFolder = "uploads"
-	cfg.MaxContentLength = 50 * 1024 * 1024 // 50MB default (reasonable limit)
-	cfg.AllowedExtensions = []string{"png", "jpg", "jpeg", "gif", "webp", "mp3", "ogg", "flac", "wav", "midi", "mid", "mp4", "webm", "mov", "avi", "mkv", "txt", "py", "js", "html", "css", "json", "xml", "md", "pdf", "zip", "rar"}
-	cfg.ImageExtensions = []string{"png", "jpg", "jpeg", "gif", "webp"}
-	cfg.MusicExtensions = []string{"mp3", "ogg", "flac", "wav"}
-	cfg.VideoExtensions = []string{"mp4", "webm", "mov", "avi", "mkv"}
-	cfg.UploadSubdirs = map[string]string{
-		"avatars": "avatars",
-		"room_avatars": "room_avatars",
-		"channel_icons": "channel_icons",
-		"files": "files",
-		"music": "music",
-		"videos": "videos",
-	}
-	cfg.PermanentSessionLifetimeDays = 30
-	cfg.RememberCookieDurationDays = 30
-	cfg.SessionCookieName = "boxchat_session"
-	cfg.SessionCookieHTTPOnly = true
-	cfg.SessionCookieSameSite = "Lax"
-	cfg.SessionCookieSecure = false
-	cfg.RememberCookieName = "boxchat_remember"
-	cfg.RememberCookieHTTPOnly = true
-	cfg.RememberCookieSameSite = "Lax"
-	cfg.RememberCookieSecure = false
-	cfg.ServerHost = "127.0.0.1"
-	cfg.ServerPort = "5000"
-	
-	// Try to load from config.json
+	cfg.Database.Path = "instance/boxchat.db"
+	cfg.Server.Host = "127.0.0.1"
+	cfg.Server.Port = 5000
+	cfg.Security.SecretKey = ""
+	cfg.Upload.Folder = "uploads"
+	cfg.Upload.MaxSize = 50 * 1024 * 1024 // 50MB
+	cfg.Session.LifetimeDays = 30
+	cfg.Session.CookieName = "boxchat_session"
+	cfg.Session.HTTPOnly = true
+	cfg.Session.SameSite = "Lax"
+	cfg.Session.Secure = false
+	cfg.RememberCookie.DurationDays = 30
+	cfg.RememberCookie.Name = "boxchat_remember"
+	cfg.RememberCookie.HTTPOnly = true
+	cfg.RememberCookie.SameSite = "Lax"
+	cfg.RememberCookie.Secure = false
+	cfg.Giphy.APIKey = ""
+
+	// Try to load config.yaml
+	configPath := filepath.Join(rootDir, "config.yaml")
 	data, err := os.ReadFile(configPath)
 	if err == nil {
-		json.Unmarshal(data, cfg)
-		
-		// Validate and warn about dangerous MAX_CONTENT_LENGTH values
-		if cfg.MaxContentLength > 1024*1024*1024 { // > 1GB
-			fmt.Printf("[CONFIG] ⚠️  WARNING: MAX_CONTENT_LENGTH (%d bytes) is dangerously high! Consider setting it to 50MB (52428800) or less.\n", cfg.MaxContentLength)
+		if err := yaml.Unmarshal(data, cfg); err != nil {
+			return nil, fmt.Errorf("failed to parse config.yaml: %w", err)
 		}
+		fmt.Printf("[CONFIG] ✓ Loaded config.yaml\n")
+
+		// Validate max_size
+		if cfg.Upload.MaxSize > 1024*1024*1024 {
+			fmt.Printf("[CONFIG] ⚠️  WARNING: upload.max_size (%d bytes) is dangerously high! Consider 50MB or less.\n", cfg.Upload.MaxSize)
+		}
+	} else {
+		fmt.Printf("[CONFIG] ⚠️  config.yaml not found, using defaults\n")
 	}
 
 	// Override with environment variables (ENV takes precedence)
-	if env := os.Getenv("SQLALCHEMY_DATABASE_URI"); env != "" {
-		cfg.SQLAlchemyDatabaseURI = env
-	}
-	if env := os.Getenv("SECRET_KEY"); env != "" {
-		cfg.SecretKey = env
-	}
-	if env := os.Getenv("GIPHY_API_KEY"); env != "" {
-		cfg.GiphyAPIKey = env
+	if env := os.Getenv("DATABASE_PATH"); env != "" {
+		cfg.Database.Path = env
 	}
 	if env := os.Getenv("SERVER_HOST"); env != "" {
-		cfg.ServerHost = env
+		cfg.Server.Host = env
 	}
 	if env := os.Getenv("SERVER_PORT"); env != "" {
-		cfg.ServerPort = env
+		fmt.Sscanf(env, "%d", &cfg.Server.Port)
+	}
+	if env := os.Getenv("SECRET_KEY"); env != "" {
+		cfg.Security.SecretKey = env
+	}
+	if env := os.Getenv("GIPHY_API_KEY"); env != "" {
+		cfg.Giphy.APIKey = env
+	}
+	if env := os.Getenv("UPLOAD_FOLDER"); env != "" {
+		cfg.Upload.Folder = env
 	}
 	if env := os.Getenv("MAX_CONTENT_LENGTH"); env != "" {
 		var maxLen int64
 		fmt.Sscanf(env, "%d", &maxLen)
-		cfg.MaxContentLength = maxLen
+		cfg.Upload.MaxSize = maxLen
 	}
 
 	// Generate secret key if not provided
-	if cfg.SecretKey == "" {
-		cfg.SecretKey = generateSecretKey()
-		fmt.Println("[CONFIG] ⚠️  No SECRET_KEY provided. Generated random key for this session.")
-		fmt.Println("[CONFIG] ⚠️  Please set SECRET_KEY environment variable for production!")
+	if cfg.Security.SecretKey == "" {
+		cfg.Security.SecretKey = generateSecretKey()
+		fmt.Println("[CONFIG] ⚠️  No secret_key in config. Generated random key for this session.")
+		fmt.Println("[CONFIG] ⚠️  Please set secret_key in config.yaml for production!")
 	}
-	
+
 	// Compute durations
-	cfg.PermanentSessionLifetime = time.Duration(cfg.PermanentSessionLifetimeDays) * 24 * time.Hour
-	cfg.RememberCookieDuration = time.Duration(cfg.RememberCookieDurationDays) * 24 * time.Hour
-	
+	cfg.PermanentSessionLifetime = time.Duration(cfg.Session.LifetimeDays) * 24 * time.Hour
+	cfg.RememberCookieDuration = time.Duration(cfg.RememberCookie.DurationDays) * 24 * time.Hour
+
 	// Compute paths
-	cfg.UploadDir = filepath.Join(rootDir, cfg.UploadFolder)
+	cfg.UploadDir = filepath.Join(rootDir, cfg.Upload.Folder)
 	
-	// Parse SQLite path
-	if cfg.SQLAlchemyDatabaseURI != "" {
-		if cfg.SQLAlchemyDatabaseURI == "sqlite:///thecomboxmsgr.db" {
-			cfg.DBPath = filepath.Join(rootDir, "instance", "thecomboxmsgr.db")
-		} else if len(cfg.SQLAlchemyDatabaseURI) > 10 && cfg.SQLAlchemyDatabaseURI[:10] == "sqlite:///" {
-			dbFile := cfg.SQLAlchemyDatabaseURI[10:]
-			if !filepath.IsAbs(dbFile) {
-				cfg.DBPath = filepath.Join(rootDir, dbFile)
-			} else {
-				cfg.DBPath = dbFile
-			}
-		}
+	// DB path
+	if filepath.IsAbs(cfg.Database.Path) {
+		cfg.DBPath = cfg.Database.Path
+	} else {
+		cfg.DBPath = filepath.Join(rootDir, cfg.Database.Path)
 	}
-	
+
+	// Flatten for compatibility
+	cfg.ServerHost = cfg.Server.Host
+	cfg.ServerPort = fmt.Sprintf("%d", cfg.Server.Port)
+	cfg.SecretKey = cfg.Security.SecretKey
+	cfg.GiphyAPIKey = cfg.Giphy.APIKey
+
+	// Allowed extensions (hardcoded for security)
+	cfg.ImageExtensions = []string{"png", "jpg", "jpeg", "gif", "webp"}
+	cfg.MusicExtensions = []string{"mp3", "ogg", "flac", "wav"}
+	cfg.VideoExtensions = []string{"mp4", "webm", "mov", "avi", "mkv"}
+	filesExtensions := []string{"txt", "py", "js", "html", "css", "json", "xml", "md", "pdf", "zip", "rar"}
+	cfg.AllowedExtensions = append(cfg.AllowedExtensions, cfg.ImageExtensions...)
+	cfg.AllowedExtensions = append(cfg.AllowedExtensions, cfg.MusicExtensions...)
+	cfg.AllowedExtensions = append(cfg.AllowedExtensions, cfg.VideoExtensions...)
+	cfg.AllowedExtensions = append(cfg.AllowedExtensions, filesExtensions...)
+
 	Global = cfg
 	return cfg, nil
 }
