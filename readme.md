@@ -18,7 +18,7 @@ go mod tidy
 go build -o ../boxchat-go ./cmd/server
 
 # Запуск с переменными окружения
-ADMIN_PASSWORD="$(openssl rand -base64 32)" \
+ADMIN_PASSWORD="YourPassword123!" \
 SECRET_KEY="$(openssl rand -hex 32)" \
 ALLOWED_ORIGINS="http://localhost,http://127.0.0.1" \
 ./boxchat-go
@@ -45,8 +45,6 @@ BoxChat/
 │       ├── handlers/      # HTTP обработчики
 │       ├── middleware/    # Middleware (CORS, auth, logger)
 │       ├── models/        # Модели данных
-│       ├── repository/    # Интерфейсы репозиториев
-│       ├── mock/          # Мок-объекты для тестов
 │       ├── services/      # Бизнес-логика
 │       ├── utils/         # Утилиты
 │       └── testutil/      # Тестовые хелперы
@@ -58,24 +56,64 @@ BoxChat/
 
 ## Конфигурация
 
-> **Миграция с JSON на YAML:** Если вы обновляетесь со старой версии, удалите `config.json` и создайте `config.yaml` на основе [`config.yaml.example`](config.yaml.example).
+### YAML конфиг
 
-**Файл:** `config.yaml` (скопируйте `config.yaml.example`)
+**Файл:** `config.yaml`
 
-Основные поля:
+```yaml
+# config.yaml.example
 
-| Секция | Поле | Тип | Описание | Default |
-|--------|------|-----|----------|---------|
-| `database` | `path` | string | Путь к SQLite базе | `instance/boxchat.db` |
-| `server` | `host` | string | Хост сервера | `127.0.0.1` |
-| `server` | `port` | int | Порт сервера | `5000` |
-| `security` | `secret_key` | string | Ключ сессий/JWT | автогенерация |
-| `upload` | `folder` | string | Папка загрузок | `uploads` |
-| `upload` | `max_size` | int | Макс. размер файла (байты) | `52428800` (50MB) |
-| `session` | `lifetime_days` | int | Время жизни сессии (дни) | `30` |
-| `giphy` | `api_key` | string | Giphy API ключ | — |
+# База данных
+database:
+  path: instance/boxchat.db
 
-Полный пример — в [`config.yaml.example`](config.yaml.example).
+# Сервер
+server:
+  host: 127.0.0.1
+  port: 5000
+
+# Безопасность
+secret_key: ""  # Пустой = автогенерация (не для production!)
+
+# Загрузка файлов
+upload:
+  folder: uploads
+  max_size: 52428800  # 50MB в байтах
+  
+  # Разрешённые расширения
+  allowed_extensions:
+    images: [png, jpg, jpeg, gif, webp]
+    music: [mp3, ogg, flac, wav]
+    video: [mp4, webm, mov, avi, mkv]
+    files: [txt, py, js, html, css, json, xml, md, pdf, zip, rar]
+  
+  # Подпапки для разных типов файлов
+  subdirs:
+    avatars: avatars
+    room_avatars: room_avatars
+    channel_icons: channel_icons
+    files: files
+    music: music
+    videos: videos
+
+# Сессии и куки
+session:
+  lifetime_days: 30
+  cookie_name: boxchat_session
+  http_only: true
+  same_site: Lax
+  secure: false
+
+remember_cookie:
+  duration_days: 30
+  name: boxchat_remember
+  http_only: true
+  same_site: Lax
+  secure: false
+
+# Внешние сервисы
+giphy_api_key: ""  # Опционально, для GIF
+```
 
 ### Переменные окружения
 
@@ -90,10 +128,8 @@ BoxChat/
 | `UPLOAD_FOLDER` | Папка для загрузок | `uploads` |
 | `MAX_CONTENT_LENGTH` | Макс. размер файла (байты) | `52428800` (50MB) |
 | `GIPHY_API_KEY` | API ключ Giphy | — |
-| `ALLOWED_ORIGINS` | CORS origin (через запятую) | `http://localhost,http://127.0.0.1` |
-| `ADMIN_PASSWORD` | Пароль первого админа (генерируется, если не задан) | автогенерация |
-
-> **Примечание:** `MAX_CONTENT_LENGTH` используется только при запуске без `config.yaml`. В YAML-конфигурации используйте `upload.max_size`.
+| `ALLOWED_ORIGINS` | CORS origin (через запятую) | — |
+| `ADMIN_PASSWORD` | Пароль первого админа | — |
 
 Пример запуска:
 

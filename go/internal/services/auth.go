@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"golang.org/x/crypto/bcrypt"
-	"gorm.io/gorm"
 )
 
 var (
@@ -22,9 +21,11 @@ type AuthService struct {
 	userRepo repository.UserRepository
 }
 
-// NewAuthService creates a new AuthService with database repository
+// NewAuthService creates a new AuthService with default database repository
 func NewAuthService() *AuthService {
-	return &AuthService{}
+	return &AuthService{
+		userRepo: repository.NewUserRepository(database.DB),
+	}
 }
 
 // NewAuthServiceWithRepo creates a new AuthService with custom repository (for testing)
@@ -94,38 +95,12 @@ func (s *AuthService) Login(req *LoginRequest) (*models.User, error) {
 
 // getUserByUsername finds user by username (case-insensitive)
 func (s *AuthService) getUserByUsername(username string) (*models.User, error) {
-	// Use database directly if repo not set
-	if s.userRepo == nil {
-		return s.getUserByUsernameDB(username)
-	}
 	return s.userRepo.GetByUsernameCaseInsensitive(username)
-}
-
-func (s *AuthService) getUserByUsernameDB(username string) (*models.User, error) {
-	var user models.User
-	if err := database.DB.Where("LOWER(username) = LOWER(?)", username).First(&user).Error; err != nil {
-		return nil, err
-	}
-	return &user, nil
 }
 
 // updateUserLoginInfo updates user login information
 func (s *AuthService) updateUserLoginInfo(id uint, failedAttempts int, lockoutUntil, lastLoginAt *time.Time) error {
-	if s.userRepo == nil {
-		return s.updateUserLoginInfoDB(id, failedAttempts, lockoutUntil, lastLoginAt)
-	}
 	return s.userRepo.UpdateLoginInfo(id, failedAttempts, lockoutUntil, lastLoginAt)
-}
-
-func (s *AuthService) updateUserLoginInfoDB(id uint, failedAttempts int, lockoutUntil, lastLoginAt *time.Time) error {
-	var user models.User
-	if err := database.DB.First(&user, id).Error; err != nil {
-		return err
-	}
-	user.FailedLoginAttempts = failedAttempts
-	user.LockoutUntil = lockoutUntil
-	user.LastLoginAt = lastLoginAt
-	return database.DB.Save(&user).Error
 }
 
 func (s *AuthService) Register(req *RegisterRequest) (*models.User, error) {
@@ -144,13 +119,9 @@ func (s *AuthService) Register(req *RegisterRequest) (*models.User, error) {
 		return nil, errors.New("passwords do not match")
 	}
 
-	// Check if username exists - use repo or direct DB
+	// Check if username exists
 	if err := s.checkUsernameExists(req.Username); err != nil {
-		// If error is not "not found", then username exists
-		if !errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, ErrUserAlreadyExists
-		}
-		// User not found, we can proceed
+		return nil, ErrUserAlreadyExists
 	}
 
 	// Hash password
@@ -169,14 +140,8 @@ func (s *AuthService) Register(req *RegisterRequest) (*models.User, error) {
 		FailedLoginAttempts: 0,
 	}
 
-	if s.userRepo == nil {
-		if err := database.DB.Create(&user).Error; err != nil {
-			return nil, err
-		}
-	} else {
-		if err := s.userRepo.Create(&user); err != nil {
-			return nil, err
-		}
+	if err := s.userRepo.Create(&user); err != nil {
+		return nil, err
 	}
 
 	return &user, nil
@@ -184,14 +149,6 @@ func (s *AuthService) Register(req *RegisterRequest) (*models.User, error) {
 
 // checkUsernameExists checks if username already exists
 func (s *AuthService) checkUsernameExists(username string) error {
-	if s.userRepo == nil {
-		var existingUser models.User
-		err := database.DB.Where("LOWER(username) = LOWER(?)", username).First(&existingUser).Error
-		if err == nil {
-			return ErrUserAlreadyExists
-		}
-		return err
-	}
 	_, err := s.userRepo.GetByUsernameCaseInsensitive(username)
 	if err == nil {
 		return ErrUserAlreadyExists
@@ -200,16 +157,5 @@ func (s *AuthService) checkUsernameExists(username string) error {
 }
 
 func (s *AuthService) GetUserByID(userID uint) (*models.User, error) {
-	if s.userRepo == nil {
-		return s.GetUserByIDDB(userID)
-	}
 	return s.userRepo.GetByID(userID)
-}
-
-func (s *AuthService) GetUserByIDDB(userID uint) (*models.User, error) {
-	var user models.User
-	if err := database.DB.First(&user, userID).Error; err != nil {
-		return nil, err
-	}
-	return &user, nil
 }

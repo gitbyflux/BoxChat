@@ -105,9 +105,9 @@ type RoleRepository interface {
 	GetByRoom(roomID uint) ([]*models.Role, error)
 	Update(role *models.Role) error
 	Delete(id uint) error
-	GetMemberRoles(memberID uint) ([]*models.MemberRole, error)
-	AddMemberRole(memberID, roleID uint) error
-	RemoveMemberRole(memberID, roleID uint) error
+	GetMemberRoles(userID, roomID uint) ([]*models.MemberRole, error)
+	AddMemberRole(userID, roomID, roleID uint) error
+	RemoveMemberRole(userID, roomID, roleID uint) error
 	GetDefaultRole(roomID uint) (*models.Role, error)
 	GetAdminRole(roomID uint) (*models.Role, error)
 	GetOwnerRole(roomID uint) (*models.Role, error)

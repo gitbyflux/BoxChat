@@ -6,8 +6,11 @@ import (
 	"log"
 	"regexp"
 	"time"
+
 	"boxchat/internal/database"
 	"boxchat/internal/models"
+	"boxchat/internal/repository"
+
 	"gorm.io/gorm"
 )
 
@@ -19,10 +22,19 @@ var (
 	ErrActionOnOwner    = errors.New("cannot perform action on owner")
 )
 
-type ModerationService struct{}
+type ModerationService struct {
+	userRepo   repository.UserRepository
+	memberRepo repository.MemberRepository
+	roleRepo   repository.RoleRepository
+}
 
 func NewModerationService() *ModerationService {
-	return &ModerationService{}
+	db := database.DB
+	return &ModerationService{
+		userRepo:   repository.NewUserRepository(db),
+		memberRepo: repository.NewMemberRepository(db),
+		roleRepo:   repository.NewRoleRepository(db),
+	}
 }
 
 type CommandResult struct {
@@ -31,8 +43,8 @@ type CommandResult struct {
 }
 
 type MemberMuteUpdate struct {
-	RoomID    uint      `json:"room_id"`
-	UserID    uint      `json:"user_id"`
+	RoomID     uint       `json:"room_id"`
+	UserID     uint       `json:"user_id"`
 	MutedUntil *time.Time `json:"muted_until"`
 }
 
@@ -52,18 +64,18 @@ func ParseDuration(token string) (int, error) {
 	if raw == nil {
 		return 0, ErrInvalidDuration
 	}
-	
+
 	value := 0
 	fmt.Sscanf(raw[1], "%d", &value)
 	if value <= 0 {
 		return 0, ErrInvalidDuration
 	}
-	
+
 	unit := raw[2]
 	if unit == "" {
 		unit = "m"
 	}
-	
+
 	switch unit {
 	case "m":
 		return value, nil
@@ -82,68 +94,63 @@ func FindRoomMemberByToken(roomID uint, token string) (*models.Member, error) {
 	if len(username) > 0 && username[0] == '@' {
 		username = username[1:]
 	}
-	
+
 	if username == "" {
 		return nil, ErrMemberNotFound
 	}
-	
+
 	var member models.Member
 	err := database.DB.Joins("JOIN users ON users.id = members.user_id").
 		Where("members.room_id = ? AND LOWER(users.username) = LOWER(?)", roomID, username).
 		First(&member).Error
-	
+
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, ErrMemberNotFound
 		}
 		return nil, err
 	}
-	
+
 	return &member, nil
 }
 
 // CanUserModerate checks if user has moderation permission
 func CanUserModerate(userID, roomID uint, permissionKey string) bool {
-	var user models.User
-	if err := database.DB.First(&user, userID).Error; err != nil {
+	user, err := repository.NewUserRepository(database.DB).GetByID(userID)
+	if err != nil {
 		return false
 	}
-	
+
 	// Superuser can always moderate
 	if user.IsSuperuser {
 		return true
 	}
-	
+
 	// Check room admin role
-	var member models.Member
-	if err := database.DB.Where("user_id = ? AND room_id = ?", userID, roomID).First(&member).Error; err != nil {
+	member, err := repository.NewMemberRepository(database.DB).GetByRoomAndUser(roomID, userID)
+	if err != nil {
 		return false
 	}
-	
+
 	if member.Role == "owner" || member.Role == "admin" {
 		return true
 	}
-	
+
 	// Check role permissions
-	var memberRoles []models.MemberRole
-	if err := database.DB.Where("user_id = ? AND room_id = ?", userID, roomID).Find(&memberRoles).Error; err != nil {
+	memberRoles, err := repository.NewRoleRepository(database.DB).GetMemberRoles(userID, roomID)
+	if err != nil {
 		return false
 	}
-	
+
 	for _, mr := range memberRoles {
-		var role models.Role
-		if err := database.DB.First(&role, mr.RoleID).Error; err != nil {
-			continue
-		}
-		
-		permissions := parseRolePermissions(role.PermissionsJSON)
+		permissions := parseRolePermissions(mr.Role.PermissionsJSON)
 		for _, perm := range permissions {
 			if perm == permissionKey {
 				return true
 			}
 		}
 	}
-	
+
 	return false
 }
 
@@ -189,32 +196,32 @@ func (s *ModerationService) Mute(moderatorID, roomID uint, username, durationStr
 	if !CanUserModerate(moderatorID, roomID, "mute_members") {
 		return &CommandResult{OK: false, Message: "No permission to mute members."}, nil, ErrNoPermission
 	}
-	
+
 	// Parse duration
 	minutes, err := ParseDuration(durationStr)
 	if err != nil {
 		return &CommandResult{OK: false, Message: "Invalid duration. Example: 30m, 2h, 1d"}, nil, ErrInvalidDuration
 	}
-	
+
 	// Find target
 	target, err := FindRoomMemberByToken(roomID, username)
 	if err != nil {
 		return &CommandResult{OK: false, Message: "User not found in this room."}, nil, ErrMemberNotFound
 	}
-	
+
 	// Check self-mute
 	if target.UserID == moderatorID {
 		return &CommandResult{OK: false, Message: "You cannot mute yourself."}, nil, ErrSelfAction
 	}
-	
+
 	// Check if target is owner
 	if target.Role == "owner" {
-		var moderator models.User
-		if err := database.DB.First(&moderator, moderatorID).Error; err != nil || !moderator.IsSuperuser {
+		moderator, err := s.userRepo.GetByID(moderatorID)
+		if err != nil || !moderator.IsSuperuser {
 			return &CommandResult{OK: false, Message: "Cannot mute room owner."}, nil, ErrActionOnOwner
 		}
 	}
-	
+
 	// Calculate mute until
 	until := time.Now().Add(time.Duration(minutes) * time.Minute)
 
@@ -303,36 +310,31 @@ func (s *ModerationService) Kick(moderatorID, roomID uint, username, reason stri
 	if !CanUserModerate(moderatorID, roomID, "kick_members") {
 		return &CommandResult{OK: false, Message: "No permission to kick members."}, nil, nil, ErrNoPermission
 	}
-	
+
 	// Find target
 	target, err := FindRoomMemberByToken(roomID, username)
 	if err != nil {
 		return &CommandResult{OK: false, Message: "User not found in this room."}, nil, nil, ErrUserNotFound
 	}
-	
+
 	// Check self-kick
 	if target.UserID == moderatorID {
 		return &CommandResult{OK: false, Message: "You cannot kick yourself."}, nil, nil, ErrSelfAction
 	}
-	
+
 	// Check if target is owner
-	if target.Role == "owner" {
-		var moderator models.User
-		if err := database.DB.First(&moderator, moderatorID).Error; err != nil || !moderator.IsSuperuser {
+	moderator, err := s.userRepo.GetByID(moderatorID)
+	if err != nil || !moderator.IsSuperuser {
+		if target.Role == "owner" {
 			return &CommandResult{OK: false, Message: "Cannot kick room owner."}, nil, nil, ErrActionOnOwner
 		}
 	}
-	
+
 	// Delete memberships
-	var memberships []models.Member
-	if err := database.DB.Where("user_id = ? AND room_id = ?", target.UserID, roomID).Find(&memberships).Error; err != nil {
+	if err := s.memberRepo.DeleteByRoomAndUser(roomID, target.UserID); err != nil {
 		return nil, nil, nil, err
 	}
-	
-	for _, m := range memberships {
-		database.DB.Delete(&m)
-	}
-	
+
 	return &CommandResult{
 			OK:      true,
 			Message: fmt.Sprintf("%s kicked.", target.User.Username),
@@ -351,26 +353,26 @@ func (s *ModerationService) Ban(moderatorID, roomID uint, username, durationStr,
 	if !CanUserModerate(moderatorID, roomID, "ban_members") {
 		return &CommandResult{OK: false, Message: "No permission to ban members."}, nil, nil, ErrNoPermission
 	}
-	
+
 	// Find target
 	target, err := FindRoomMemberByToken(roomID, username)
 	if err != nil {
 		return &CommandResult{OK: false, Message: "User not found in this room."}, nil, nil, ErrUserNotFound
 	}
-	
+
 	// Check self-ban
 	if target.UserID == moderatorID {
 		return &CommandResult{OK: false, Message: "You cannot ban yourself."}, nil, nil, ErrSelfAction
 	}
-	
+
 	// Check if target is owner
-	if target.Role == "owner" {
-		var moderator models.User
-		if err := database.DB.First(&moderator, moderatorID).Error; err != nil || !moderator.IsSuperuser {
+	moderator, err := s.userRepo.GetByID(moderatorID)
+	if err != nil || !moderator.IsSuperuser {
+		if target.Role == "owner" {
 			return &CommandResult{OK: false, Message: "Cannot ban room owner."}, nil, nil, ErrActionOnOwner
 		}
 	}
-	
+
 	// Parse duration (optional)
 	var bannedUntil *time.Time
 	if durationStr != "" {
@@ -380,16 +382,17 @@ func (s *ModerationService) Ban(moderatorID, roomID uint, username, durationStr,
 			bannedUntil = &until
 		}
 	}
-	
+
 	// Default reason
 	if reason == "" {
 		reason = "Banned by moderator"
 	}
-	
+
 	// Create or update ban record
+	db := database.DB
 	var existingBan models.RoomBan
-	result := database.DB.Where("room_id = ? AND user_id = ?", roomID, target.UserID).First(&existingBan)
-	
+	result := db.Where("room_id = ? AND user_id = ?", roomID, target.UserID).First(&existingBan)
+
 	if result.Error == gorm.ErrRecordNotFound {
 		ban := models.RoomBan{
 			RoomID:      roomID,
@@ -398,29 +401,24 @@ func (s *ModerationService) Ban(moderatorID, roomID uint, username, durationStr,
 			Reason:      reason,
 			BannedUntil: bannedUntil,
 		}
-		database.DB.Create(&ban)
+		db.Create(&ban)
 	} else {
 		existingBan.Reason = reason
 		existingBan.BannedByID = &moderatorID
 		existingBan.BannedUntil = bannedUntil
-		database.DB.Save(&existingBan)
+		db.Save(&existingBan)
 	}
-	
+
 	// Delete memberships
-	var memberships []models.Member
-	if err := database.DB.Where("user_id = ? AND room_id = ?", target.UserID, roomID).Find(&memberships).Error; err != nil {
+	if err := s.memberRepo.DeleteByRoomAndUser(roomID, target.UserID); err != nil {
 		return nil, nil, nil, err
 	}
-	
-	for _, m := range memberships {
-		database.DB.Delete(&m)
-	}
-	
+
 	msg := fmt.Sprintf("%s banned.", target.User.Username)
 	if bannedUntil != nil {
 		msg = fmt.Sprintf("%s banned until %s.", target.User.Username, bannedUntil.Format("2006-01-02 15:04 UTC"))
 	}
-	
+
 	return &CommandResult{
 			OK:      true,
 			Message: msg,

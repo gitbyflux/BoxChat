@@ -3,15 +3,16 @@ package services
 import (
 	"encoding/json"
 	"errors"
+
 	"boxchat/internal/database"
 	"boxchat/internal/models"
-	"gorm.io/gorm"
+	"boxchat/internal/repository"
 )
 
 var (
-	ErrRoleNotFound        = errors.New("role not found")
-	ErrPermissionNotFound  = errors.New("permission not found")
-	ErrInvalidPermission   = errors.New("invalid permission key")
+	ErrRoleNotFound       = errors.New("role not found")
+	ErrPermissionNotFound = errors.New("permission not found")
+	ErrInvalidPermission  = errors.New("invalid permission key")
 )
 
 // RolePermissionKeys defines all available permission keys
@@ -27,10 +28,19 @@ var RolePermissionKeys = []string{
 	"mute_members",
 }
 
-type RoleService struct{}
+type RoleService struct {
+	roleRepo   repository.RoleRepository
+	memberRepo repository.MemberRepository
+	userRepo   repository.UserRepository
+}
 
 func NewRoleService() *RoleService {
-	return &RoleService{}
+	db := database.DB
+	return &RoleService{
+		roleRepo:   repository.NewRoleRepository(db),
+		memberRepo: repository.NewMemberRepository(db),
+		userRepo:   repository.NewUserRepository(db),
+	}
 }
 
 // GetRolePermissions returns parsed permissions from role
@@ -63,7 +73,7 @@ func (s *RoleService) SetRolePermissions(role *models.Role, permissions []string
 	}
 
 	role.PermissionsJSON = string(jsonData)
-	return database.DB.Save(role).Error
+	return s.roleRepo.Update(role)
 }
 
 // IsValidPermission checks if permission key is valid
@@ -81,8 +91,8 @@ func (s *RoleService) GetUserPermissions(userID, roomID uint) map[string]bool {
 	permissions := make(map[string]bool)
 
 	// Check if user is superuser
-	var user models.User
-	if err := database.DB.First(&user, userID).Error; err == nil && user.IsSuperuser {
+	user, err := s.userRepo.GetByID(userID)
+	if err == nil && user.IsSuperuser {
 		for _, key := range RolePermissionKeys {
 			permissions[key] = true
 		}
@@ -90,8 +100,8 @@ func (s *RoleService) GetUserPermissions(userID, roomID uint) map[string]bool {
 	}
 
 	// Check member role
-	var member models.Member
-	if err := database.DB.Where("user_id = ? AND room_id = ?", userID, roomID).First(&member).Error; err == nil {
+	member, err := s.memberRepo.GetByRoomAndUser(roomID, userID)
+	if err == nil {
 		if member.Role == "owner" || member.Role == "admin" {
 			for _, key := range RolePermissionKeys {
 				permissions[key] = true
@@ -101,19 +111,14 @@ func (s *RoleService) GetUserPermissions(userID, roomID uint) map[string]bool {
 	}
 
 	// Get user's roles in room
-	var memberRoles []models.MemberRole
-	if err := database.DB.Where("user_id = ? AND room_id = ?", userID, roomID).Find(&memberRoles).Error; err != nil {
+	memberRoles, err := s.roleRepo.GetMemberRoles(userID, roomID)
+	if err != nil {
 		return permissions
 	}
 
 	// Collect permissions from all roles
 	for _, mr := range memberRoles {
-		var role models.Role
-		if err := database.DB.First(&role, mr.RoleID).Error; err != nil {
-			continue
-		}
-
-		rolePerms := s.GetRolePermissions(&role)
+		rolePerms := s.GetRolePermissions(&mr.Role)
 		for _, perm := range rolePerms {
 			permissions[perm] = true
 		}
@@ -138,10 +143,19 @@ func (s *RoleService) EnsureDefaultRoles(roomID uint) (*models.Role, *models.Rol
 	var admin *models.Role
 
 	// Find or create "everyone" role
-	var existingEveryone models.Role
-	result := database.DB.Where("room_id = ? AND mention_tag = ?", roomID, "everyone").First(&existingEveryone)
+	existingEveryone, err := s.roleRepo.GetByRoom(roomID)
+	if err != nil {
+		existingEveryone = []*models.Role{}
+	}
 
-	if result.Error == gorm.ErrRecordNotFound {
+	for _, role := range existingEveryone {
+		if role.MentionTag == "everyone" {
+			everyone = role
+			break
+		}
+	}
+
+	if everyone == nil {
 		everyone = &models.Role{
 			RoomID:                   roomID,
 			Name:                     "everyone",
@@ -150,18 +164,25 @@ func (s *RoleService) EnsureDefaultRoles(roomID uint) (*models.Role, *models.Rol
 			CanBeMentionedByEveryone: false,
 			PermissionsJSON:          "[]",
 		}
-		if err := database.DB.Create(everyone).Error; err != nil {
+		if err := s.roleRepo.Create(everyone); err != nil {
 			return nil, nil, err
 		}
-	} else if result.Error == nil {
-		everyone = &existingEveryone
 	}
 
 	// Find or create "admin" role
-	var existingAdmin models.Role
-	result = database.DB.Where("room_id = ? AND mention_tag = ?", roomID, "admin").First(&existingAdmin)
+	existingAdmin, err := s.roleRepo.GetByRoom(roomID)
+	if err != nil {
+		existingAdmin = []*models.Role{}
+	}
 
-	if result.Error == gorm.ErrRecordNotFound {
+	for _, role := range existingAdmin {
+		if role.MentionTag == "admin" {
+			admin = role
+			break
+		}
+	}
+
+	if admin == nil {
 		adminPerms, _ := json.Marshal(RolePermissionKeys)
 		admin = &models.Role{
 			RoomID:                   roomID,
@@ -171,17 +192,14 @@ func (s *RoleService) EnsureDefaultRoles(roomID uint) (*models.Role, *models.Rol
 			CanBeMentionedByEveryone: false,
 			PermissionsJSON:          string(adminPerms),
 		}
-		if err := database.DB.Create(admin).Error; err != nil {
+		if err := s.roleRepo.Create(admin); err != nil {
 			return nil, nil, err
 		}
-	} else if result.Error == nil {
-		admin = &existingAdmin
+	} else if admin.PermissionsJSON == "" {
 		// Ensure admin has all permissions
-		if admin.PermissionsJSON == "" {
-			adminPerms, _ := json.Marshal(RolePermissionKeys)
-			admin.PermissionsJSON = string(adminPerms)
-			database.DB.Save(admin)
-		}
+		adminPerms, _ := json.Marshal(RolePermissionKeys)
+		admin.PermissionsJSON = string(adminPerms)
+		s.roleRepo.Update(admin)
 	}
 
 	return everyone, admin, nil
@@ -190,8 +208,8 @@ func (s *RoleService) EnsureDefaultRoles(roomID uint) (*models.Role, *models.Rol
 // EnsureUserDefaultRoles assigns default roles to user in room
 func (s *RoleService) EnsureUserDefaultRoles(userID, roomID uint) error {
 	// Check if member exists
-	var member models.Member
-	if err := database.DB.Where("user_id = ? AND room_id = ?", userID, roomID).First(&member).Error; err != nil {
+	member, err := s.memberRepo.GetByRoomAndUser(roomID, userID)
+	if err != nil {
 		return err
 	}
 
@@ -202,27 +220,34 @@ func (s *RoleService) EnsureUserDefaultRoles(userID, roomID uint) error {
 	}
 
 	// Assign "everyone" role if not exists
-	var existingEveryoneRole models.MemberRole
-	if err := database.DB.Where("user_id = ? AND room_id = ? AND role_id = ?", userID, roomID, everyone.ID).First(&existingEveryoneRole).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			database.DB.Create(&models.MemberRole{
-				UserID:  userID,
-				RoomID:  roomID,
-				RoleID:  everyone.ID,
-			})
+	memberRoles, err := s.roleRepo.GetMemberRoles(userID, roomID)
+	if err != nil {
+		memberRoles = []*models.MemberRole{}
+	}
+
+	hasEveryoneRole := false
+	hasAdminRole := false
+
+	for _, mr := range memberRoles {
+		if mr.RoleID == everyone.ID {
+			hasEveryoneRole = true
+		}
+		if mr.RoleID == admin.ID {
+			hasAdminRole = true
+		}
+	}
+
+	if !hasEveryoneRole {
+		if err := s.roleRepo.AddMemberRole(userID, roomID, everyone.ID); err != nil {
+			return err
 		}
 	}
 
 	// Assign "admin" role if user is owner or admin
 	if member.Role == "owner" || member.Role == "admin" {
-		var existingAdminRole models.MemberRole
-		if err := database.DB.Where("user_id = ? AND room_id = ? AND role_id = ?", userID, roomID, admin.ID).First(&existingAdminRole).Error; err != nil {
-			if errors.Is(err, gorm.ErrRecordNotFound) {
-				database.DB.Create(&models.MemberRole{
-					UserID:  userID,
-					RoomID:  roomID,
-					RoleID:  admin.ID,
-				})
+		if !hasAdminRole {
+			if err := s.roleRepo.AddMemberRole(userID, roomID, admin.ID); err != nil {
+				return err
 			}
 		}
 	}
@@ -242,8 +267,9 @@ func (s *RoleService) CanUserMentionRole(userID, roomID uint, targetRole *models
 	}
 
 	// Check if user has permission via RoleMentionPermission
+	db := database.DB
 	var permissions []models.RoleMentionPermission
-	if err := database.DB.Where("room_id = ? AND target_role_id = ?", roomID, targetRole.ID).Find(&permissions).Error; err != nil {
+	if err := db.Where("room_id = ? AND target_role_id = ?", roomID, targetRole.ID).Find(&permissions).Error; err != nil {
 		return false
 	}
 
@@ -271,8 +297,8 @@ func (s *RoleService) CanUserMentionRole(userID, roomID uint, targetRole *models
 func (s *RoleService) GetUserRoleIDs(userID, roomID uint) map[uint]bool {
 	roleIDs := make(map[uint]bool)
 
-	var memberRoles []models.MemberRole
-	if err := database.DB.Where("user_id = ? AND room_id = ?", userID, roomID).Find(&memberRoles).Error; err != nil {
+	memberRoles, err := s.roleRepo.GetMemberRoles(userID, roomID)
+	if err != nil {
 		return roleIDs
 	}
 
@@ -286,8 +312,9 @@ func (s *RoleService) GetUserRoleIDs(userID, roomID uint) map[uint]bool {
 // AddRoleMentionPermission adds permission for source role to mention target role
 func (s *RoleService) AddRoleMentionPermission(roomID, sourceRoleID, targetRoleID uint) error {
 	// Check if permission already exists
+	db := database.DB
 	var existing models.RoleMentionPermission
-	if err := database.DB.Where("room_id = ? AND source_role_id = ? AND target_role_id = ?", roomID, sourceRoleID, targetRoleID).First(&existing).Error; err == nil {
+	if err := db.Where("room_id = ? AND source_role_id = ? AND target_role_id = ?", roomID, sourceRoleID, targetRoleID).First(&existing).Error; err == nil {
 		return nil // Already exists
 	}
 
@@ -297,10 +324,11 @@ func (s *RoleService) AddRoleMentionPermission(roomID, sourceRoleID, targetRoleI
 		TargetRoleID: targetRoleID,
 	}
 
-	return database.DB.Create(&permission).Error
+	return db.Create(&permission).Error
 }
 
 // RemoveRoleMentionPermission removes permission for source role to mention target role
 func (s *RoleService) RemoveRoleMentionPermission(roomID, sourceRoleID, targetRoleID uint) error {
-	return database.DB.Where("room_id = ? AND source_role_id = ? AND target_role_id = ?", roomID, sourceRoleID, targetRoleID).Delete(&models.RoleMentionPermission{}).Error
+	db := database.DB
+	return db.Where("room_id = ? AND source_role_id = ? AND target_role_id = ?", roomID, sourceRoleID, targetRoleID).Delete(&models.RoleMentionPermission{}).Error
 }

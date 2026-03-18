@@ -3,10 +3,12 @@ package services
 import (
 	"boxchat/internal/database"
 	"boxchat/internal/models"
+	"boxchat/internal/repository"
 	"errors"
 	"time"
 
 	"golang.org/x/crypto/bcrypt"
+	"gorm.io/gorm"
 )
 
 var (
@@ -18,16 +20,27 @@ var (
 	ErrNotEnoughRights = errors.New("not enough rights")
 )
 
-type AdminService struct{}
+type AdminService struct {
+	userRepo   repository.UserRepository
+	memberRepo repository.MemberRepository
+	roomRepo   repository.RoomRepository
+	roleRepo   repository.RoleRepository
+}
 
 func NewAdminService() *AdminService {
-	return &AdminService{}
+	db := database.DB
+	return &AdminService{
+		userRepo:   repository.NewUserRepository(db),
+		memberRepo: repository.NewMemberRepository(db),
+		roomRepo:   repository.NewRoomRepository(db),
+		roleRepo:   repository.NewRoleRepository(db),
+	}
 }
 
 // IsAdmin checks if user is superuser
 func (s *AdminService) IsAdmin(userID uint) bool {
-	var user models.User
-	if err := database.DB.First(&user, userID).Error; err != nil {
+	user, err := s.userRepo.GetByID(userID)
+	if err != nil {
 		return false
 	}
 	return user.IsSuperuser
@@ -35,8 +48,8 @@ func (s *AdminService) IsAdmin(userID uint) bool {
 
 // IsRoomAdmin checks if user has admin rights in room
 func (s *AdminService) IsRoomAdmin(userID, roomID uint) bool {
-	var user models.User
-	if err := database.DB.First(&user, userID).Error; err != nil {
+	user, err := s.userRepo.GetByID(userID)
+	if err != nil {
 		return false
 	}
 
@@ -46,8 +59,8 @@ func (s *AdminService) IsRoomAdmin(userID, roomID uint) bool {
 	}
 
 	// Check member role
-	var member models.Member
-	if err := database.DB.Where("user_id = ? AND room_id = ?", userID, roomID).First(&member).Error; err != nil {
+	member, err := s.memberRepo.GetByRoomAndUser(roomID, userID)
+	if err != nil {
 		return false
 	}
 
@@ -61,8 +74,8 @@ func (s *AdminService) IsRoomAdmin(userID, roomID uint) bool {
 
 // HasPermissionInRoom checks if user has specific permission in room
 func (s *AdminService) HasPermissionInRoom(userID, roomID uint, permission string) bool {
-	var user models.User
-	if err := database.DB.First(&user, userID).Error; err != nil {
+	user, err := s.userRepo.GetByID(userID)
+	if err != nil {
 		return false
 	}
 
@@ -70,8 +83,8 @@ func (s *AdminService) HasPermissionInRoom(userID, roomID uint, permission strin
 		return true
 	}
 
-	var member models.Member
-	if err := database.DB.Where("user_id = ? AND room_id = ?", userID, roomID).First(&member).Error; err != nil {
+	member, err := s.memberRepo.GetByRoomAndUser(roomID, userID)
+	if err != nil {
 		return false
 	}
 
@@ -80,18 +93,13 @@ func (s *AdminService) HasPermissionInRoom(userID, roomID uint, permission strin
 	}
 
 	// Check role permissions
-	var memberRoles []models.MemberRole
-	if err := database.DB.Where("user_id = ? AND room_id = ?", userID, roomID).Find(&memberRoles).Error; err != nil {
+	memberRoles, err := s.roleRepo.GetMemberRoles(userID, roomID)
+	if err != nil {
 		return false
 	}
 
 	for _, mr := range memberRoles {
-		var role models.Role
-		if err := database.DB.First(&role, mr.RoleID).Error; err != nil {
-			continue
-		}
-
-		permissions := parseRolePermissions(role.PermissionsJSON)
+		permissions := parseRolePermissions(mr.Role.PermissionsJSON)
 		for _, perm := range permissions {
 			if perm == permission {
 				return true
@@ -107,27 +115,27 @@ func (s *AdminService) BanUser(adminID, targetID uint, reason, banIPs string) er
 	if !s.IsAdmin(adminID) {
 		return ErrNotAdmin
 	}
-	
+
 	if adminID == targetID {
 		return ErrCannotBanSelf
 	}
-	
-	var target models.User
-	if err := database.DB.First(&target, targetID).Error; err != nil {
+
+	target, err := s.userRepo.GetByID(targetID)
+	if err != nil {
 		return err
 	}
-	
+
 	if target.IsSuperuser {
 		return ErrCannotBanAdmin
 	}
-	
+
 	now := time.Now()
 	target.IsBanned = true
 	target.BanReason = reason
 	target.BannedAt = &now
 	target.BannedIPs = banIPs
-	
-	return database.DB.Save(&target).Error
+
+	return s.userRepo.Update(target)
 }
 
 // UnbanUser removes global ban from user
@@ -135,22 +143,22 @@ func (s *AdminService) UnbanUser(adminID, targetID uint) error {
 	if !s.IsAdmin(adminID) {
 		return ErrNotAdmin
 	}
-	
-	var target models.User
-	if err := database.DB.First(&target, targetID).Error; err != nil {
+
+	target, err := s.userRepo.GetByID(targetID)
+	if err != nil {
 		return err
 	}
-	
+
 	if !target.IsBanned {
 		return ErrUserNotBanned
 	}
-	
+
 	target.IsBanned = false
 	target.BanReason = ""
 	target.BannedAt = nil
 	target.BannedIPs = ""
-	
-	return database.DB.Save(&target).Error
+
+	return s.userRepo.Update(target)
 }
 
 // KickUserFromRoom kicks user from a room
@@ -158,18 +166,8 @@ func (s *AdminService) KickUserFromRoom(adminID, roomID, targetID uint, reason s
 	if !s.IsAdmin(adminID) {
 		return ErrNotAdmin
 	}
-	
-	// Delete memberships
-	var memberships []models.Member
-	if err := database.DB.Where("user_id = ? AND room_id = ?", targetID, roomID).Find(&memberships).Error; err != nil {
-		return err
-	}
-	
-	for _, m := range memberships {
-		database.DB.Delete(&m)
-	}
-	
-	return nil
+
+	return s.memberRepo.DeleteByRoomAndUser(roomID, targetID)
 }
 
 // MuteUserInRoom mutes user in a room
@@ -180,28 +178,13 @@ func (s *AdminService) MuteUserInRoom(adminID, roomID, targetID uint, durationMi
 
 	until := time.Now().Add(time.Duration(durationMinutes) * time.Minute)
 
-	var memberships []models.Member
-	if err := database.DB.Where("user_id = ? AND room_id = ?", targetID, roomID).Find(&memberships).Error; err != nil {
+	member, err := s.memberRepo.GetByRoomAndUser(roomID, targetID)
+	if err != nil {
 		return err
 	}
 
-	// Use transaction to ensure atomicity
-	tx := database.DB.Begin()
-	defer func() {
-		if r := recover(); r != nil {
-			tx.Rollback()
-		}
-	}()
-
-	for i := range memberships {
-		memberships[i].MutedUntil = &until
-		if err := tx.Save(&memberships[i]).Error; err != nil {
-			tx.Rollback()
-			return err
-		}
-	}
-
-	return tx.Commit().Error
+	member.MutedUntil = &until
+	return s.memberRepo.Update(member)
 }
 
 // UnmuteUserInRoom unmutes user in a room
@@ -210,28 +193,13 @@ func (s *AdminService) UnmuteUserInRoom(adminID, roomID, targetID uint) error {
 		return ErrNotAdmin
 	}
 
-	var memberships []models.Member
-	if err := database.DB.Where("user_id = ? AND room_id = ?", targetID, roomID).Find(&memberships).Error; err != nil {
+	member, err := s.memberRepo.GetByRoomAndUser(roomID, targetID)
+	if err != nil {
 		return err
 	}
 
-	// Use transaction to ensure atomicity
-	tx := database.DB.Begin()
-	defer func() {
-		if r := recover(); r != nil {
-			tx.Rollback()
-		}
-	}()
-
-	for i := range memberships {
-		memberships[i].MutedUntil = nil
-		if err := tx.Save(&memberships[i]).Error; err != nil {
-			tx.Rollback()
-			return err
-		}
-	}
-
-	return tx.Commit().Error
+	member.MutedUntil = nil
+	return s.memberRepo.Update(member)
 }
 
 // PromoteUser promotes user to admin in a room
@@ -239,18 +207,18 @@ func (s *AdminService) PromoteUser(adminID, roomID, targetID uint, newRole strin
 	if !s.IsAdmin(adminID) {
 		return ErrNotAdmin
 	}
-	
+
 	if newRole != "admin" && newRole != "owner" && newRole != "member" {
 		return errors.New("invalid role")
 	}
-	
-	var member models.Member
-	if err := database.DB.Where("user_id = ? AND room_id = ?", targetID, roomID).First(&member).Error; err != nil {
+
+	member, err := s.memberRepo.GetByRoomAndUser(roomID, targetID)
+	if err != nil {
 		return err
 	}
-	
+
 	member.Role = newRole
-	return database.DB.Save(&member).Error
+	return s.memberRepo.Update(member)
 }
 
 // DemoteUser demotes user in a room
@@ -258,18 +226,18 @@ func (s *AdminService) DemoteUser(adminID, roomID, targetID uint) error {
 	if !s.IsAdmin(adminID) {
 		return ErrNotAdmin
 	}
-	
-	var member models.Member
-	if err := database.DB.Where("user_id = ? AND room_id = ?", targetID, roomID).First(&member).Error; err != nil {
+
+	member, err := s.memberRepo.GetByRoomAndUser(roomID, targetID)
+	if err != nil {
 		return err
 	}
-	
+
 	if member.Role == "owner" {
 		return errors.New("cannot demote owner")
 	}
-	
+
 	member.Role = "member"
-	return database.DB.Save(&member).Error
+	return s.memberRepo.Update(member)
 }
 
 // ChangeUserPassword changes user password (admin action)
@@ -288,13 +256,13 @@ func (s *AdminService) ChangeUserPassword(adminID, targetID uint, newPassword st
 		return err
 	}
 
-	var target models.User
-	if err := database.DB.First(&target, targetID).Error; err != nil {
+	target, err := s.userRepo.GetByID(targetID)
+	if err != nil {
 		return err
 	}
 
 	target.Password = string(hashedPassword)
-	return database.DB.Save(&target).Error
+	return s.userRepo.Update(target)
 }
 
 // DeleteUserMessages deletes all messages by a user
@@ -303,26 +271,28 @@ func (s *AdminService) DeleteUserMessages(adminID, targetID uint, roomID *uint) 
 		return ErrNotAdmin
 	}
 
+	db := database.DB
+
 	if roomID != nil {
 		// Delete messages in specific room
 		// Get all channels in the room first
 		var channels []models.Channel
-		if err := database.DB.Where("room_id = ?", *roomID).Find(&channels).Error; err != nil {
+		if err := db.Where("room_id = ?", *roomID).Find(&channels).Error; err != nil {
 			return err
 		}
-		
+
 		channelIDs := make([]uint, len(channels))
 		for i, ch := range channels {
 			channelIDs[i] = ch.ID
 		}
-		
+
 		if len(channelIDs) > 0 {
-			database.DB.Where("user_id = ? AND channel_id IN ?", targetID, channelIDs).
+			db.Where("user_id = ? AND channel_id IN ?", targetID, channelIDs).
 				Delete(&models.Message{})
 		}
 	} else {
 		// Delete all messages
-		database.DB.Where("user_id = ?", targetID).Delete(&models.Message{})
+		db.Where("user_id = ?", targetID).Delete(&models.Message{})
 	}
 
 	return nil
@@ -333,7 +303,7 @@ func (s *AdminService) GetBannedIPs(adminID uint) ([]models.User, error) {
 	if !s.IsAdmin(adminID) {
 		return nil, ErrNotAdmin
 	}
-	
+
 	var users []models.User
 	database.DB.Where("is_banned = ? AND banned_ips != ?", true, "").Find(&users)
 	return users, nil
@@ -341,8 +311,8 @@ func (s *AdminService) GetBannedIPs(adminID uint) ([]models.User, error) {
 
 // ChangeOwnPassword changes current user's password
 func (s *AdminService) ChangeOwnPassword(userID uint, oldPassword, newPassword string) error {
-	var user models.User
-	if err := database.DB.First(&user, userID).Error; err != nil {
+	user, err := s.userRepo.GetByID(userID)
+	if err != nil {
 		return err
 	}
 
@@ -363,7 +333,7 @@ func (s *AdminService) ChangeOwnPassword(userID uint, oldPassword, newPassword s
 	}
 
 	user.Password = string(hashedPassword)
-	return database.DB.Save(&user).Error
+	return s.userRepo.Update(user)
 }
 
 // BanUserInRoom bans user in a specific room
@@ -377,8 +347,8 @@ func (s *AdminService) BanUserInRoom(adminID, roomID, targetID uint, reason stri
 		return ErrNotEnoughRights
 	}
 
-	var target models.User
-	if err := database.DB.First(&target, targetID).Error; err != nil {
+	target, err := s.userRepo.GetByID(targetID)
+	if err != nil {
 		return err
 	}
 
@@ -439,7 +409,6 @@ func (s *AdminService) BanUserInRoom(adminID, roomID, targetID uint, reason stri
 	}
 
 	// Use Save which will update if exists, create if not
-	// This prevents race condition between check and create/update
 	if err := tx.Save(&ban).Error; err != nil {
 		tx.Rollback()
 		return err
@@ -464,8 +433,8 @@ func (s *AdminService) GlobalBanUser(adminID, targetID uint, reason string, banI
 		return ErrCannotBanSelf
 	}
 
-	var target models.User
-	if err := database.DB.First(&target, targetID).Error; err != nil {
+	target, err := s.userRepo.GetByID(targetID)
+	if err != nil {
 		return err
 	}
 
@@ -498,8 +467,8 @@ func (s *AdminService) GlobalBanUser(adminID, targetID uint, reason string, banI
 	}
 
 	// Get all memberships
-	var memberships []models.Member
-	if err := database.DB.Where("user_id = ?", targetID).Find(&memberships).Error; err != nil {
+	memberships, err := s.memberRepo.GetByRoom(targetID)
+	if err != nil && err != gorm.ErrRecordNotFound {
 		return err
 	}
 
@@ -514,7 +483,7 @@ func (s *AdminService) GlobalBanUser(adminID, targetID uint, reason string, banI
 			MessagesDeleted: deleteMessages,
 		}
 		database.DB.Create(&ban)
-		database.DB.Delete(&m)
+		s.memberRepo.Delete(m.ID)
 	}
 
 	// Delete messages if requested
