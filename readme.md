@@ -18,7 +18,7 @@ go mod tidy
 go build -o ../boxchat-go ./cmd/server
 
 # Запуск с переменными окружения
-ADMIN_PASSWORD="YourPassword123!" \
+ADMIN_PASSWORD="$(openssl rand -base64 32)" \
 SECRET_KEY="$(openssl rand -hex 32)" \
 ALLOWED_ORIGINS="http://localhost,http://127.0.0.1" \
 ./boxchat-go
@@ -45,6 +45,8 @@ BoxChat/
 │       ├── handlers/      # HTTP обработчики
 │       ├── middleware/    # Middleware (CORS, auth, logger)
 │       ├── models/        # Модели данных
+│       ├── repository/    # Интерфейсы репозиториев
+│       ├── mock/          # Мок-объекты для тестов
 │       ├── services/      # Бизнес-логика
 │       ├── utils/         # Утилиты
 │       └── testutil/      # Тестовые хелперы
@@ -55,6 +57,8 @@ BoxChat/
 ```
 
 ## Конфигурация
+
+> **Миграция с JSON на YAML:** Если вы обновляетесь со старой версии, удалите `config.json` и создайте `config.yaml` на основе [`config.yaml.example`](config.yaml.example).
 
 **Файл:** `config.yaml` (скопируйте `config.yaml.example`)
 
@@ -86,8 +90,10 @@ BoxChat/
 | `UPLOAD_FOLDER` | Папка для загрузок | `uploads` |
 | `MAX_CONTENT_LENGTH` | Макс. размер файла (байты) | `52428800` (50MB) |
 | `GIPHY_API_KEY` | API ключ Giphy | — |
-| `ALLOWED_ORIGINS` | CORS origin (через запятую) | — |
-| `ADMIN_PASSWORD` | Пароль первого админа | — |
+| `ALLOWED_ORIGINS` | CORS origin (через запятую) | `http://localhost,http://127.0.0.1` |
+| `ADMIN_PASSWORD` | Пароль первого админа (генерируется, если не задан) | автогенерация |
+
+> **Примечание:** `MAX_CONTENT_LENGTH` используется только при запуске без `config.yaml`. В YAML-конфигурации используйте `upload.max_size`.
 
 Пример запуска:
 
