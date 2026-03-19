@@ -5,6 +5,9 @@ import (
 	"boxchat/internal/config"
 	"boxchat/internal/database"
 	"boxchat/internal/models"
+	"boxchat/internal/utils"
+	"crypto/rand"
+	"encoding/hex"
 	"fmt"
 	"os"
 	"testing"
@@ -16,6 +19,13 @@ import (
 	"gorm.io/gorm/logger"
 )
 
+// generateUniqueDBSuffix generates a random suffix for unique database names
+func generateUniqueDBSuffix() string {
+	b := make([]byte, 8)
+	rand.Read(b)
+	return hex.EncodeToString(b)
+}
+
 // SetupTestDB creates an in-memory SQLite database for testing.
 // Returns the config and cleanup function.
 //
@@ -26,14 +36,15 @@ import (
 // - Returns config that can be used with handlers
 //
 // Usage:
-//   cfg, cleanup := testutil.SetupTestDB(t)
-//   defer cleanup()
+//
+//	cfg, cleanup := testutil.SetupTestDB(t)
+//	defer cleanup()
 func SetupTestDB(t *testing.T) (*config.Config, func()) {
 	t.Helper()
 
 	// Create a unique in-memory database for this test
-	// Using file::memory:?cache=shared with unique name to avoid cross-test contamination
-	dbPath := fmt.Sprintf("file:mem_%s_%d?mode=memory&cache=shared", t.Name(), time.Now().UnixNano())
+	// Using random suffix to ensure uniqueness even for tests with same name
+	dbPath := fmt.Sprintf("file:mem_%s_%s?mode=memory&cache=private", t.Name(), generateUniqueDBSuffix())
 
 	// Open direct database connection
 	db, err := gorm.Open(sqlite.Open(dbPath), &gorm.Config{
@@ -98,6 +109,14 @@ func SetupTestDB(t *testing.T) (*config.Config, func()) {
 		"music":         "music",
 		"videos":        "videos",
 	}
+	// Set default allowed extensions for tests
+	cfg.ImageExtensions = []string{"png", "jpg", "jpeg", "gif", "webp", "bmp"}
+	cfg.MusicExtensions = []string{"mp3", "ogg", "flac", "wav"}
+	cfg.VideoExtensions = []string{"mp4", "webm", "mov", "avi", "mkv"}
+	cfg.AllowedExtensions = append(cfg.ImageExtensions, cfg.MusicExtensions...)
+	cfg.AllowedExtensions = append(cfg.AllowedExtensions, cfg.VideoExtensions...)
+	cfg.AllowedExtensions = append(cfg.AllowedExtensions, "txt", "pdf", "zip")
+
 	cfg.Session.LifetimeDays = 30
 	cfg.Session.CookieName = "boxchat_session"
 	cfg.Session.HTTPOnly = true
@@ -112,6 +131,9 @@ func SetupTestDB(t *testing.T) (*config.Config, func()) {
 	cfg.RootDir = t.TempDir()
 	cfg.UploadDir = cfg.RootDir
 	cfg.DBPath = dbPath
+
+	// Initialize utility extensions from config
+	utils.InitExtensions(cfg)
 
 	// Set global DB for code that uses database.DB directly
 	oldDB := database.DB
@@ -137,7 +159,7 @@ func SetupTestDB(t *testing.T) (*config.Config, func()) {
 func SetupTestDBNoAdmin(t *testing.T) (*config.Config, *gorm.DB, func()) {
 	t.Helper()
 
-	dbPath := fmt.Sprintf("file:mem_%s_%d?mode=memory&cache=shared", t.Name(), time.Now().UnixNano())
+	dbPath := fmt.Sprintf("file:mem_%s_%s?mode=memory&cache=private", t.Name(), generateUniqueDBSuffix())
 
 	db, err := gorm.Open(sqlite.Open(dbPath), &gorm.Config{
 		Logger: logger.Default.LogMode(logger.Silent),
@@ -175,6 +197,14 @@ func SetupTestDBNoAdmin(t *testing.T) (*config.Config, *gorm.DB, func()) {
 		"music":         "music",
 		"videos":        "videos",
 	}
+	// Set default allowed extensions for tests
+	cfg.ImageExtensions = []string{"png", "jpg", "jpeg", "gif", "webp", "bmp"}
+	cfg.MusicExtensions = []string{"mp3", "ogg", "flac", "wav"}
+	cfg.VideoExtensions = []string{"mp4", "webm", "mov", "avi", "mkv"}
+	cfg.AllowedExtensions = append(cfg.ImageExtensions, cfg.MusicExtensions...)
+	cfg.AllowedExtensions = append(cfg.AllowedExtensions, cfg.VideoExtensions...)
+	cfg.AllowedExtensions = append(cfg.AllowedExtensions, "txt", "pdf", "zip")
+
 	cfg.Session.LifetimeDays = 30
 	cfg.Session.CookieName = "boxchat_session"
 	cfg.Session.HTTPOnly = true
@@ -189,6 +219,9 @@ func SetupTestDBNoAdmin(t *testing.T) (*config.Config, *gorm.DB, func()) {
 	cfg.RootDir = t.TempDir()
 	cfg.UploadDir = cfg.RootDir
 	cfg.DBPath = dbPath
+
+	// Initialize utility extensions from config
+	utils.InitExtensions(cfg)
 
 	oldDB := database.DB
 	database.DB = db
@@ -226,10 +259,10 @@ func CreateTestRoom(t *testing.T, db *gorm.DB, name string, roomType string, own
 	t.Helper()
 
 	room := models.Room{
-		Name:      name,
-		Type:      roomType,
-		OwnerID:   &ownerID,
-		IsPublic:  true,
+		Name:        name,
+		Type:        roomType,
+		OwnerID:     &ownerID,
+		IsPublic:    true,
 		InviteToken: fmt.Sprintf("invite_%s_%d", name, time.Now().UnixNano()),
 	}
 	if err := db.Create(&room).Error; err != nil {

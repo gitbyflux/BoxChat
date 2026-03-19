@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"golang.org/x/crypto/bcrypt"
+	"gorm.io/gorm"
 )
 
 var (
@@ -151,8 +152,14 @@ func (s *AuthService) Register(req *RegisterRequest) (*models.User, error) {
 func (s *AuthService) checkUsernameExists(username string) error {
 	_, err := s.userRepo.GetByUsernameCaseInsensitive(username)
 	if err == nil {
+		// User found - username is taken
 		return ErrUserAlreadyExists
 	}
+	// Check if error is "record not found" - this means username is available
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil
+	}
+	// Some other database error
 	return err
 }
 
